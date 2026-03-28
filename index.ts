@@ -1,188 +1,149 @@
-import sanitizeHtml from "sanitize-html";
 import archiver from "archiver";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { createWriteStream, mkdir } from "node:fs";
 import path from "node:path";
-import fs from "fs";
+import { extractArticle, type ExtractedArticle } from "./clean.ts";
 
-async function fetchUrl(url: string): Promise<string> {
+async function fetchArticle(url: string) {
   const resp = await fetch(url);
-  return sanitizeHtml(await resp.text());
+  return extractArticle(await resp.text(), url);
 }
 
-function createEpub(title: string, author: string, chapters: string[]) {
-  const dir = title.toLowerCase().replace(/\s+/g, "_");
-  const cwd = `epubs/${dir}`;
-  mkdirSync(cwd);
-  mkdirSync(`${cwd}/META-INF`);
-  mkdirSync(`${cwd}/OEBPS`);
-  writeFileSync(`${cwd}/mimetype`, "application/epub+zip");
+function xhtml(title: string, body: string, attrs = "") {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" ${attrs} xml:lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>${title}</title>
+</head>
+<body>
+  ${body}
+</body>
+</html>`;
+}
 
-  const meta = `
-        <?xml version="1.0" encoding="UTF-8"?>
-        <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-        <rootfiles>
-            <rootfile full-path="OEBPS/content.opf"
-                    media-type="application/oebps-package+xml"/>
-        </rootfiles>
-        </container>
-    `;
-  writeFileSync(`${cwd}/META-INF/container.xml`, meta);
+async function createEpub(
+  title: string,
+  author: string,
+  chapters: ExtractedArticle[],
+) {
+  const dir = `epubs/${title.toLowerCase().replace(/\s+/g, "_")}`;
 
-  function writeContent() {
-    const uniqueId = crypto.randomUUID();
-    const content = `
-    <?xml version="1.0" encoding="UTF-8"?>
-    <package version="3.0"
-            xmlns="http://www.idpf.org/2007/opf"
-            unique-identifier="${dir}"
-            xml:lang="en">
+  await Bun.write(`${dir}/mimetype`, "application/epub+zip");
 
-    <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-        <dc:identifier id="${dir}">${uniqueId}</dc:identifier>
-        <dc:title>${dir}</dc:title>
-        <dc:creator id="author">${author}</dc:creator>
-        <dc:language>en</dc:language>
-        <dc:date>2024-01-15</dc:date>
-        <meta property="dcterms:modified">2024-01-15T00:00:00Z</meta>
-    </metadata>
+  await Bun.write(
+    `${dir}/META-INF/container.xml`,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`,
+  );
 
-    <manifest>
-        <!-- Navigation document (required in EPUB 3) -->
-        <item id="nav"
-            href="nav.xhtml"
-            media-type="application/xhtml+xml"
-            properties="nav"/>
+  const chapterItems = chapters
+    .map(
+      (_, i) =>
+        `<item id="ch${i + 1}" href="ch${i + 1}.xhtml" media-type="application/xhtml+xml"/>`,
+    )
+    .join("\n    ");
+  const spineItems = chapters
+    .map((_, i) => `<itemref idref="ch${i + 1}"/>`)
+    .join("\n    ");
+  const date = new Date().toISOString().split("T")[0];
 
-        <!-- Cover page -->
-        <item id="cover"
-            href="cover.xhtml"
-            media-type="application/xhtml+xml"/>
+  await Bun.write(
+    `${dir}/OEBPS/content.opf`,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid" xml:lang="en">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">${crypto.randomUUID()}</dc:identifier>
+    <dc:title>${title}</dc:title>
+    <dc:creator>${author}</dc:creator>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">${date}T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>
+    ${chapterItems}
+  </manifest>
+  <spine>
+    <itemref idref="cover" linear="no"/>
+    ${spineItems}
+  </spine>
+</package>`,
+  );
 
-        <!-- Chapters -->
-        <item id="chapter1"
-            href="chapter1.xhtml"
-            media-type="application/xhtml+xml"/>
-    </manifest>
+  const tocLinks = chapters
+    .map(
+      (ch, i) =>
+        `<li><a href="ch${i + 1}.xhtml">${ch.title || `Chapter ${i + 1}`}</a></li>`,
+    )
+    .join("\n      ");
 
-    <spine>
-        <!-- linear="no" means it's not part of the main reading flow -->
-        <itemref idref="cover"   linear="no"/>
-        <itemref idref="chapter1"/>
-    </spine>
+  await Bun.write(
+    `${dir}/OEBPS/nav.xhtml`,
+    xhtml(
+      "Table of Contents",
+      `<nav epub:type="toc" id="toc">
+    <h1>Contents</h1>
+    <ol>
+      ${tocLinks}
+    </ol>
+  </nav>`,
+      'xmlns:epub="http://www.idpf.org/2007/ops"',
+    ),
+  );
 
-    </package>
-    `;
-    writeFileSync(`${cwd}/OEBPS/content.opf`, content);
+  await Bun.write(
+    `${dir}/OEBPS/cover.xhtml`,
+    xhtml("Cover", `<h1>${title}</h1>\n  <h2>by ${author}</h2>`),
+  );
+
+  for (let i = 0; i < chapters.length; i++) {
+    const ch = chapters[i]!;
+    const chTitle = ch.title || `Chapter ${i + 1}`;
+    const chAuthor = ch.byline || author;
+    await Bun.write(
+      `${dir}/OEBPS/ch${i + 1}.xhtml`,
+      xhtml(
+        chTitle,
+        `<h1>${chTitle}</h1>\n  <h2>${chAuthor}</h2>\n  ${ch.content}`,
+      ),
+    );
   }
 
-  writeContent();
-
-  function writeNav() {
-    const content = `
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE html>
-    <html xmlns="http://www.w3.org/1999/xhtml"
-        xmlns:epub="http://www.idpf.org/2007/ops"
-        xml:lang="en">
-    <head>
-        <meta charset="UTF-8"/>
-        <title>Table of Contents</title>
-    </head>
-    <body>
-
-        <!-- Required: the main TOC -->
-        <nav epub:type="toc" id="toc">
-        <h1>Contents</h1>
-        <ol>
-            <li><a href="chapter1.xhtml">Chapter 1: Introduction</a></li>
-        </ol>
-        </nav>
-        
-        <!-- Optional: landmarks (helps readers jump to key locations) -->
-        <nav epub:type="landmarks" hidden="">
-        <ol>
-            <li><a epub:type="toc"        href="nav.xhtml#toc">Table of Contents</a></li>
-            <li><a epub:type="bodymatter" href="chapter1.xhtml">Start of Content</a></li>
-        </ol>
-        </nav>
-
-    </body>
-    </html>
-    `;
-    writeFileSync(`${cwd}/OEBPS/nav.xhtml`, content);
-  }
-  writeNav();
-
-  function writeChapter(chapter: string) {
-    const content = `
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE html>
-    <html xmlns="http://www.w3.org/1999/xhtml"
-        xml:lang="en">
-    <head>
-        <meta charset="UTF-8"/>
-        <title>Chapter 1: Introduction</title>
-    </head>
-    <body>
-        <h1>Chapter 1: Introduction</h1>
-        <p>${chapter}</p>
-    </body>
-    </html>
-    `;
-    writeFileSync(`${cwd}/OEBPS/chapter1.xhtml`, content);
-  }
-
-  chapters.map((chapter) => writeChapter(chapter));
-
-  function writeCover() {
-    const content = `
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE html>
-    <html xmlns="http://www.w3.org/1999/xhtml"
-        xml:lang="en">
-    <head>
-        <meta charset="UTF-8"/>
-        <title>Cover</title>
-    </head>
-    <body>
-        <h1>${title}</h1>
-        <h2>by ${author}</h2>
-    </body>
-    </html>
-    `;
-    writeFileSync(`${cwd}/OEBPS/cover.xhtml`, content);
-  }
-
-  writeCover();
-
-  zipEpub(dir);
+  await zipEpub(dir);
 }
 
 function zipEpub(dir: string) {
-  const outputPath = `epubs_zipped/${dir}.epub`;
-  return new Promise((resolve, reject) => {
-    const output = fs.createWriteStream(outputPath);
+  Bun.write("epubs_zipped/.gitkeep", "");
+  const outputPath = `epubs_zipped/${path.basename(dir)}.epub`;
+  return new Promise<void>((resolve, reject) => {
+    const output = createWriteStream(outputPath);
     const archive = archiver("zip");
 
     output.on("close", () => {
       console.log(`Created ${outputPath} (${archive.pointer()} bytes)`);
-      resolve(undefined);
+      resolve();
     });
     archive.on("error", reject);
     archive.pipe(output);
 
-    // Step 1: mimetype first, uncompressed (store level 0)
-    archive.append("application/epub+zip", {
-      name: "mimetype",
-      store: true, // no compression
-    });
-
-    // Step 2: everything else
-    archive.directory(path.join("epubs", dir, "META-INF"), "META-INF");
-    archive.directory(path.join("epubs", dir, "OEBPS"), "OEBPS");
-
+    archive.append("application/epub+zip", { name: "mimetype", store: true });
+    archive.directory(path.join(dir, "META-INF"), "META-INF");
+    archive.directory(path.join(dir, "OEBPS"), "OEBPS");
     archive.finalize();
   });
 }
 
-createEpub("My Book Title", "Jane Smith", ["My book content"]);
+const article = await fetchArticle(
+  "https://www.derekthompson.org/p/we-havent-seen-the-worst-of-what",
+);
+
+await createEpub(
+  article.title || "Gambling",
+  article.byline || "Derek Thompson",
+  [article],
+);
