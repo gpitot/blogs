@@ -1,0 +1,22 @@
+{
+  "name": "blog-to-epub",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "dompurify": "^3.2.4",
+    "fflate": "^0.8.2",
+    "linkedom": "^0.18.12"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "@types/dompurify": "^3.0.5",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.0.0"
+  }
+}
