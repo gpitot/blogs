@@ -1,21 +1,26 @@
 {
-  "name": "blog-dl",
-  "module": "index.ts",
-  "type": "module",
+  "name": "blog-to-epub",
+  "version": "1.0.0",
   "private": true,
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@cf-wasm/photon": "^0.3.4",
     "@mozilla/readability": "^0.6.0",
-    "@types/archiver": "^7.0.0",
-    "@types/sanitize-html": "^2.16.1",
-    "archiver": "^7.0.1",
-    "fs": "^0.0.1-security",
+    "dom-serializer": "^3.0.0",
+    "fflate": "^0.8.2",
+    "hono": "^4.12.9",
+    "htmlparser2": "^12.0.0",
     "linkedom": "^0.18.12",
     "sanitize-html": "^2.17.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "@types/sanitize-html": "^2.16.1",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.0.0"
   }
 }
