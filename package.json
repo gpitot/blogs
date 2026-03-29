@@ -8,14 +8,18 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@cf-wasm/photon": "^0.3.4",
     "@mozilla/readability": "^0.6.0",
-    "dompurify": "^3.2.4",
+    "dom-serializer": "^3.0.0",
     "fflate": "^0.8.2",
-    "linkedom": "^0.18.12"
+    "hono": "^4.12.9",
+    "htmlparser2": "^12.0.0",
+    "linkedom": "^0.18.12",
+    "sanitize-html": "^2.17.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241230.0",
-    "@types/dompurify": "^3.0.5",
+    "@types/sanitize-html": "^2.16.1",
     "typescript": "^5.7.2",
     "wrangler": "^3.0.0"
   }

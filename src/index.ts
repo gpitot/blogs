@@ -1,37 +1,21 @@
-import { extractArticle } from "./clean.ts";
-import { generateEpub } from "./epub.ts";
+import { Hono } from "hono";
+import { extractArticle } from "./services/clean.ts";
+import { generateEpub } from "./services/epub.ts";
+import { processArticleImages } from "./services/images.ts";
 import { urlToKey, getCached, putCached, putEpub, getEpub, type Env } from "./storage.ts";
 import { renderUI } from "./ui.ts";
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
+const app = new Hono<{ Bindings: Env }>();
 
-    // GET / — serve the UI
-    if (request.method === "GET" && url.pathname === "/") {
-      return renderUI();
-    }
+app.get("/", (c) => {
+  return renderUI();
+});
 
-    // POST /convert — convert a blog URL to EPUB
-    if (request.method === "POST" && url.pathname === "/convert") {
-      return handleConvert(request, env);
-    }
-
-    // GET /download/:key — download a stored EPUB
-    const downloadMatch = url.pathname.match(/^\/download\/([a-f0-9]+)$/);
-    if (request.method === "GET" && downloadMatch) {
-      return handleDownload(downloadMatch[1]!, env);
-    }
-
-    return new Response("Not Found", { status: 404 });
-  },
-} satisfies ExportedHandler<Env>;
-
-async function handleConvert(request: Request, env: Env): Promise<Response> {
+app.post("/convert", async (c) => {
   let blogUrl: string;
 
   try {
-    const body = await request.formData();
+    const body = await c.req.formData();
     const raw = body.get("url");
     if (!raw || typeof raw !== "string") {
       return renderUI({ error: "Please provide a URL." });
@@ -45,14 +29,12 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
     return renderUI({ error: "Invalid URL. Please enter a valid blog post URL." });
   }
 
-  // Check the KV cache first
   const cacheKey = await urlToKey(blogUrl);
-  const cached = await getCached(env, cacheKey);
+  const cached = await getCached(c.env, cacheKey);
   if (cached) {
-    return Response.redirect(`/download/${cacheKey.replace("epub:", "")}`, 303);
+    return c.redirect(`/download/${cacheKey.replace("epub:", "")}`, 303);
   }
 
-  // Fetch the article with a 25s timeout
   let html: string;
   try {
     const resp = await fetch(blogUrl, {
@@ -68,7 +50,6 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
     return renderUI({ error: `Failed to fetch the URL: ${msg}` });
   }
 
-  // Extract article content
   let article: ReturnType<typeof extractArticle>;
   try {
     article = extractArticle(html, blogUrl);
@@ -77,54 +58,66 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
     return renderUI({ error: `Could not extract article content: ${msg}` });
   }
 
-  // Generate EPUB
+  // Download and process images for offline reading
+  const { html: contentWithImages, images } = await processArticleImages(
+    article.content,
+    blogUrl,
+  );
+  article.content = contentWithImages;
+
   let epubBytes: Uint8Array;
   try {
     epubBytes = generateEpub(
       article.title || "Article",
       article.byline || "Unknown Author",
       [article],
+      images,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return renderUI({ error: `Failed to generate EPUB: ${msg}` });
   }
 
-  // Store in R2 and cache the key
   const r2Key = `${cacheKey.replace("epub:", "")}.epub`;
-  await putEpub(env, r2Key, epubBytes, article.title || "Article");
-  await putCached(env, cacheKey, {
+  await putEpub(c.env, r2Key, epubBytes, article.title || "Article");
+  await putCached(c.env, cacheKey, {
     r2Key,
     title: article.title || "Article",
     createdAt: Date.now(),
   });
 
-  return Response.redirect(`/download/${cacheKey.replace("epub:", "")}`, 303);
-}
+  return c.redirect(`/download/${cacheKey.replace("epub:", "")}`, 303);
+});
 
-async function handleDownload(key: string, env: Env): Promise<Response> {
+app.get("/download/:key", async (c) => {
+  const key = c.req.param("key");
+  if (!/^[a-f0-9]+$/.test(key)) {
+    return c.notFound();
+  }
+
   const cacheKey = `epub:${key}`;
-  const cached = await getCached(env, cacheKey);
+  const cached = await getCached(c.env, cacheKey);
 
   if (!cached) {
-    // KV expired but user still has the link — try fetching directly from R2
     const r2Key = `${key}.epub`;
-    const response = await getEpub(env, r2Key, "article");
+    const response = await getEpub(c.env, r2Key, "article");
     if (!response) {
-      return new Response(
+      return c.html(
         `<html><body><p>EPUB not found or expired. <a href="/">Convert again</a></p></body></html>`,
-        { status: 404, headers: { "Content-Type": "text/html" } },
+        404,
       );
     }
     return response;
   }
 
-  const response = await getEpub(env, cached.r2Key, cached.title);
+  const response = await getEpub(c.env, cached.r2Key, cached.title);
   if (!response) {
-    return new Response(
+    return c.html(
       `<html><body><p>EPUB not found. <a href="/">Convert again</a></p></body></html>`,
-      { status: 404, headers: { "Content-Type": "text/html" } },
+      404,
     );
   }
   return response;
-}
+});
+
+export default app;
