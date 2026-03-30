@@ -5,8 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [[kv_namespaces]]
 binding = "EPUB_CACHE"
-id = "placeholder-replace-with-real-id"
-preview_id = "placeholder-replace-with-real-preview-id"
+id = "c926024d85b04cd5a4e3238e6a644f8f"
 
 [[r2_buckets]]
 binding = "EPUB_BUCKET"
