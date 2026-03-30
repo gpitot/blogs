@@ -2,6 +2,32 @@ export interface Env {
   EPUB_CACHE: KVNamespace;
 }
 
+// ---------------------------------------------------------------------------
+// Subscription types
+// ---------------------------------------------------------------------------
+
+export interface RecentEpub {
+  key: string;       // hex hash (no "epub:" prefix) – used in /download/:key
+  title: string;
+  createdAt: number; // ms since epoch
+}
+
+export interface Subscription {
+  id: string;
+  feedUrl: string;
+  siteUrl: string;   // URL the user originally submitted
+  title: string;     // feed title
+  addedAt: number;
+  lastChecked: number | null;
+  seenGuids: string[];    // de-dup ring-buffer (capped at MAX_SEEN_GUIDS)
+  recentEpubs: RecentEpub[]; // capped at MAX_RECENT_EPUBS
+}
+
+export const MAX_SEEN_GUIDS = 200;
+export const MAX_RECENT_EPUBS = 20;
+
+const SUBS_INDEX_KEY = "subs:index";
+
 interface CacheEntry {
   kvKey: string;
   title: string;
@@ -77,4 +103,59 @@ export async function getEpub(
       "Cache-Control": "public, max-age=604800",
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Subscription storage
+// ---------------------------------------------------------------------------
+
+/** Generate a random 16-hex-char ID. */
+export function generateId(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function listSubscriptionIds(env: Env): Promise<string[]> {
+  const val = await env.EPUB_CACHE.get(SUBS_INDEX_KEY);
+  if (!val) return [];
+  try {
+    return JSON.parse(val) as string[];
+  } catch {
+    return [];
+  }
+}
+
+export async function getSubscription(env: Env, id: string): Promise<Subscription | null> {
+  const val = await env.EPUB_CACHE.get(`sub:${id}`);
+  if (!val) return null;
+  try {
+    return JSON.parse(val) as Subscription;
+  } catch {
+    return null;
+  }
+}
+
+export async function listSubscriptions(env: Env): Promise<Subscription[]> {
+  const ids = await listSubscriptionIds(env);
+  const subs = await Promise.all(ids.map((id) => getSubscription(env, id)));
+  return subs.filter(Boolean) as Subscription[];
+}
+
+export async function putSubscription(env: Env, sub: Subscription): Promise<void> {
+  await env.EPUB_CACHE.put(`sub:${sub.id}`, JSON.stringify(sub));
+
+  const ids = await listSubscriptionIds(env);
+  if (!ids.includes(sub.id)) {
+    ids.push(sub.id);
+    await env.EPUB_CACHE.put(SUBS_INDEX_KEY, JSON.stringify(ids));
+  }
+}
+
+export async function deleteSubscription(env: Env, id: string): Promise<void> {
+  await env.EPUB_CACHE.delete(`sub:${id}`);
+  const ids = await listSubscriptionIds(env);
+  await env.EPUB_CACHE.put(SUBS_INDEX_KEY, JSON.stringify(ids.filter((i) => i !== id)));
 }
