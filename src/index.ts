@@ -2,7 +2,11 @@ import { Hono } from "hono";
 import { extractArticle } from "./services/clean.ts";
 import { generateEpub } from "./services/epub.ts";
 import { processArticleImages } from "./services/images.ts";
-import { detectFeedUrl, fetchAndParseFeed, type FeedItem } from "./services/rss.ts";
+import {
+  detectFeedUrl,
+  fetchAndParseFeed,
+  type FeedItem,
+} from "./services/rss.ts";
 import {
   urlToKey,
   getCached,
@@ -46,7 +50,9 @@ app.post("/convert", async (c) => {
     }
     blogUrl = parsed.href;
   } catch {
-    return renderUI({ error: "Invalid URL. Please enter a valid blog post URL." });
+    return renderUI({
+      error: "Invalid URL. Please enter a valid blog post URL.",
+    });
   }
 
   const cacheKey = await urlToKey(blogUrl);
@@ -62,7 +68,9 @@ app.post("/convert", async (c) => {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)" },
     });
     if (!resp.ok) {
-      return renderUI({ error: `Could not fetch that URL (HTTP ${resp.status}). Is it publicly accessible?` });
+      return renderUI({
+        error: `Could not fetch that URL (HTTP ${resp.status}). Is it publicly accessible?`,
+      });
     }
     html = await resp.text();
   } catch (err) {
@@ -126,7 +134,12 @@ app.get("/download/:key", async (c) => {
     );
   }
 
-  const response = await getEpub(c.env, cached.kvKey, cached.title, cached.size);
+  const response = await getEpub(
+    c.env,
+    cached.kvKey,
+    cached.title,
+    cached.size,
+  );
   if (!response) {
     return c.html(
       `<html><body><p>EPUB not found. <a href="/">Convert again</a></p></body></html>`,
@@ -159,7 +172,9 @@ app.post("/subscriptions", async (c) => {
     const parsed = new URL(raw.trim());
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       const subs = await listSubscriptions(c.env);
-      return renderSubscriptionsUI(subs, { error: "Only http and https URLs are supported." });
+      return renderSubscriptionsUI(subs, {
+        error: "Only http and https URLs are supported.",
+      });
     }
     siteUrl = parsed.href;
   } catch {
@@ -171,7 +186,8 @@ app.post("/subscriptions", async (c) => {
   if (!feedUrl) {
     const subs = await listSubscriptions(c.env);
     return renderSubscriptionsUI(subs, {
-      error: "Could not find an RSS or Atom feed for that URL. Please provide the feed URL directly.",
+      error:
+        "Could not find an RSS or Atom feed for that URL. Please provide the feed URL directly.",
     });
   }
 
@@ -192,8 +208,13 @@ app.post("/subscriptions", async (c) => {
     title: feed.title || siteUrl,
     addedAt: Date.now(),
     lastChecked: Date.now(),
-    // Mark all current items as seen so we only process future posts
-    seenGuids: feed.items.map((i) => i.guid).slice(0, MAX_SEEN_GUIDS),
+    // Mark all items as seen EXCEPT the latest 5, so the next scheduled
+    // run will download those 5 most recent posts for the new subscription.
+    seenGuids: feed.items
+      .sort((a, b) => b.pubDate - a.pubDate)
+      .slice(5)
+      .map((i) => i.guid)
+      .slice(0, MAX_SEEN_GUIDS),
     recentEpubs: [],
   };
 
@@ -218,7 +239,10 @@ app.post("/subscriptions/:id/delete", async (c) => {
 // Scheduled handler – checks all subscriptions for new posts
 // ---------------------------------------------------------------------------
 
-async function convertArticleToEpub(env: Env, item: FeedItem): Promise<string | null> {
+async function convertArticleToEpub(
+  env: Env,
+  item: FeedItem,
+): Promise<string | null> {
   const cacheKey = await urlToKey(item.link);
 
   const cached = await getCached(env, cacheKey);
@@ -230,12 +254,18 @@ async function convertArticleToEpub(env: Env, item: FeedItem): Promise<string | 
     signal: AbortSignal.timeout(25000),
     headers: { "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)" },
   });
-  if (!resp.ok) return null;
+  if (!resp.ok) {
+    console.log(`Failed to fetch article ${item.link}: HTTP ${resp.status}`);
+    return null;
+  }
 
   const html = await resp.text();
   const article = extractArticle(html, item.link);
 
-  const { html: contentWithImages, images } = await processArticleImages(article.content, item.link);
+  const { html: contentWithImages, images } = await processArticleImages(
+    article.content,
+    item.link,
+  );
   article.content = contentWithImages;
 
   const epubBytes = generateEpub(
@@ -261,11 +291,11 @@ async function checkSubscription(env: Env, sub: Subscription): Promise<void> {
   const feed = await fetchAndParseFeed(sub.feedUrl);
 
   const seenSet = new Set(sub.seenGuids);
-  // Only process items we haven't seen yet, newest first, up to 10
+  // Only process items we haven't seen yet, newest first, up to 5
   const newItems = feed.items
     .filter((item) => !seenSet.has(item.guid))
     .sort((a, b) => b.pubDate - a.pubDate)
-    .slice(0, 10);
+    .slice(0, 5);
 
   const newEpubs: Subscription["recentEpubs"] = [];
   const newGuids: string[] = [];
@@ -275,7 +305,11 @@ async function checkSubscription(env: Env, sub: Subscription): Promise<void> {
     try {
       const key = await convertArticleToEpub(env, item);
       if (key) {
-        newEpubs.push({ key, title: item.title || item.link, createdAt: Date.now() });
+        newEpubs.push({
+          key,
+          title: item.title || item.link,
+          createdAt: Date.now(),
+        });
       }
     } catch (err) {
       console.error(`[subscriptions] Failed to convert ${item.link}:`, err);
@@ -284,7 +318,9 @@ async function checkSubscription(env: Env, sub: Subscription): Promise<void> {
 
   const allGuids = [...newGuids, ...sub.seenGuids].slice(0, MAX_SEEN_GUIDS);
   const allEpubs = [...newEpubs, ...sub.recentEpubs].slice(0, MAX_RECENT_EPUBS);
-
+  console.log(
+    `[subscriptions] Checked "${sub.title}": ${newGuids.length} new items, ${newEpubs.length} new EPUBs.`,
+  );
   await putSubscription(env, {
     ...sub,
     lastChecked: Date.now(),
@@ -294,12 +330,16 @@ async function checkSubscription(env: Env, sub: Subscription): Promise<void> {
 }
 
 async function checkAllSubscriptions(env: Env): Promise<void> {
+  console.log(`[subscriptions] Checking for new posts...`);
   const subs = await listSubscriptions(env);
   for (const sub of subs) {
     try {
       await checkSubscription(env, sub);
     } catch (err) {
-      console.error(`[subscriptions] Error checking subscription ${sub.id} (${sub.feedUrl}):`, err);
+      console.error(
+        `[subscriptions] Error checking subscription ${sub.id} (${sub.feedUrl}):`,
+        err,
+      );
     }
   }
 }
