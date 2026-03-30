@@ -8,3 +8,7 @@ binding = "EPUB_CACHE"
 id = "placeholder-replace-with-real-id"
 preview_id = "placeholder-replace-with-real-preview-id"
 
+[triggers]
+# Check subscriptions for new posts every hour
+crons = ["0 * * * *"]
+
