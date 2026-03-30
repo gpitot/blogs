@@ -8,6 +8,3 @@ binding = "EPUB_CACHE"
 id = "placeholder-replace-with-real-id"
 preview_id = "placeholder-replace-with-real-preview-id"
 
-[[r2_buckets]]
-binding = "EPUB_BUCKET"
-bucket_name = "blog-epubs"

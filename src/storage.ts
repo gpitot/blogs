@@ -1,12 +1,12 @@
 export interface Env {
   EPUB_CACHE: KVNamespace;
-  EPUB_BUCKET: R2Bucket;
 }
 
 interface CacheEntry {
-  r2Key: string;
+  kvKey: string;
   title: string;
   createdAt: number;
+  size: number;
 }
 
 /** Derive a stable cache key from a URL using SHA-256 */
@@ -45,36 +45,35 @@ export async function putCached(
   });
 }
 
-/** Upload an EPUB to R2. */
+/** Upload an EPUB to KV. */
 export async function putEpub(
   env: Env,
-  r2Key: string,
+  kvKey: string,
   data: Uint8Array,
-  title: string,
 ): Promise<void> {
-  await env.EPUB_BUCKET.put(r2Key, data, {
-    httpMetadata: { contentType: "application/epub+zip" },
-    customMetadata: { title, createdAt: Date.now().toString() },
+  await env.EPUB_CACHE.put(kvKey, data.buffer as ArrayBuffer, {
+    expirationTtl: 604800, // 7 days
   });
 }
 
-/** Stream an EPUB from R2. Returns a Response or null if not found. */
+/** Retrieve an EPUB from KV. Returns a Response or null if not found. */
 export async function getEpub(
   env: Env,
-  r2Key: string,
+  kvKey: string,
   title: string,
+  size: number,
 ): Promise<Response | null> {
-  const object = await env.EPUB_BUCKET.get(r2Key);
-  if (!object) return null;
+  const buf = await env.EPUB_CACHE.get(kvKey, { type: "arrayBuffer" });
+  if (!buf) return null;
 
   const safeTitle = title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
   const filename = `${safeTitle}.epub`;
 
-  return new Response(object.body, {
+  return new Response(buf, {
     headers: {
       "Content-Type": "application/epub+zip",
       "Content-Disposition": `attachment; filename="${filename}"`,
-      "Content-Length": object.size.toString(),
+      "Content-Length": size.toString(),
       "Cache-Control": "public, max-age=604800",
     },
   });

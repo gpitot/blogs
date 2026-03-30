@@ -78,12 +78,13 @@ app.post("/convert", async (c) => {
     return renderUI({ error: `Failed to generate EPUB: ${msg}` });
   }
 
-  const r2Key = `${cacheKey.replace("epub:", "")}.epub`;
-  await putEpub(c.env, r2Key, epubBytes, article.title || "Article");
+  const kvKey = `epub-data:${cacheKey.replace("epub:", "")}`;
+  await putEpub(c.env, kvKey, epubBytes);
   await putCached(c.env, cacheKey, {
-    r2Key,
+    kvKey,
     title: article.title || "Article",
     createdAt: Date.now(),
+    size: epubBytes.byteLength,
   });
 
   return c.redirect(`/download/${cacheKey.replace("epub:", "")}`, 303);
@@ -99,18 +100,13 @@ app.get("/download/:key", async (c) => {
   const cached = await getCached(c.env, cacheKey);
 
   if (!cached) {
-    const r2Key = `${key}.epub`;
-    const response = await getEpub(c.env, r2Key, "article");
-    if (!response) {
-      return c.html(
-        `<html><body><p>EPUB not found or expired. <a href="/">Convert again</a></p></body></html>`,
-        404,
-      );
-    }
-    return response;
+    return c.html(
+      `<html><body><p>EPUB not found or expired. <a href="/">Convert again</a></p></body></html>`,
+      404,
+    );
   }
 
-  const response = await getEpub(c.env, cached.r2Key, cached.title);
+  const response = await getEpub(c.env, cached.kvKey, cached.title, cached.size);
   if (!response) {
     return c.html(
       `<html><body><p>EPUB not found. <a href="/">Convert again</a></p></body></html>`,

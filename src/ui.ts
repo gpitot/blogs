@@ -96,7 +96,7 @@ export function renderUI(options: UIOptions = {}): Response {
       </div>`
     : ""}
 
-  <footer>Powered by Cloudflare Workers &amp; R2</footer>
+  <footer>Powered by Cloudflare Workers</footer>
 </body>
 </html>`;
 
