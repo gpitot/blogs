@@ -1,4 +1,4 @@
-import type { Subscription } from "./storage.ts";
+import type { Subscription, WeeklyBookMeta } from "./storage.ts";
 
 // ---------------------------------------------------------------------------
 // Shared styles / layout helpers
@@ -92,6 +92,33 @@ const baseStyles = `
   .sub-epubs a { color: #0070f3; text-decoration: none; }
   .sub-epubs a:hover { text-decoration: underline; }
   .empty { color: #888; font-style: italic; font-size: .9rem; }
+  .book-list { list-style: none; padding: 0; margin: 0; }
+  .book-item {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: .85rem 1rem;
+    margin-bottom: .75rem;
+    background: #fff;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+  .book-info { flex: 1; }
+  .book-title { font-weight: 600; font-size: 1rem; margin: 0 0 .2rem; }
+  .book-meta { font-size: .8rem; color: #666; }
+  .book-download {
+    display: inline-block;
+    padding: .4rem 1rem;
+    font-size: .9rem;
+    font-weight: 600;
+    color: #fff;
+    background: #0070f3;
+    border-radius: 6px;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .book-download:hover { background: #005bcc; }
 `;
 
 function page(title: string, nav: string, body: string): Response {
@@ -112,8 +139,15 @@ function page(title: string, nav: string, body: string): Response {
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
-const NAV_CONVERT = `<a href="/">Convert</a><a href="/subscriptions" class="active">Subscriptions</a>`;
-const NAV_SUBS = `<a href="/" >Convert</a><a href="/subscriptions" class="active">Subscriptions</a>`;
+function nav(active: "convert" | "subscriptions" | "weekly-books"): string {
+  const link = (href: string, label: string, key: typeof active) =>
+    `<a href="${href}"${active === key ? ' class="active"' : ""}>${label}</a>`;
+  return (
+    link("/", "Convert", "convert") +
+    link("/subscriptions", "Subscriptions", "subscriptions") +
+    link("/weekly-books", "Weekly Books", "weekly-books")
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Convert page
@@ -126,7 +160,6 @@ interface UIOptions {
 }
 
 export function renderUI(options: UIOptions = {}): Response {
-  const nav = `<a href="/" class="active">Convert</a><a href="/subscriptions">Subscriptions</a>`;
   const body = `
   <h1>Blog to EPUB</h1>
   <p class="subtitle">Paste a blog post URL and download it as an EPUB for your e-reader.</p>
@@ -154,7 +187,7 @@ export function renderUI(options: UIOptions = {}): Response {
       </div>`
     : ""}`;
 
-  return page("Blog to EPUB", nav, body);
+  return page("Blog to EPUB", nav("convert"), body);
 }
 
 // ---------------------------------------------------------------------------
@@ -170,15 +203,13 @@ export function renderSubscriptionsUI(
   subs: Subscription[],
   options: SubscriptionsOptions = {},
 ): Response {
-  const nav = `<a href="/">Convert</a><a href="/subscriptions" class="active">Subscriptions</a>`;
-
   const subItems = subs.length === 0
     ? `<p class="empty">No subscriptions yet. Add a blog below to get started.</p>`
     : `<ul class="sub-list">${subs.map(renderSubItem).join("")}</ul>`;
 
   const body = `
   <h1>Blog Subscriptions</h1>
-  <p class="subtitle">Subscribe to a blog's RSS feed and new posts will be automatically converted to EPUB.</p>
+  <p class="subtitle">Subscribe to a blog's RSS feed. New posts are saved automatically and compiled into a <a href="/weekly-books">weekly book</a> every Monday.</p>
 
   <form method="POST" action="/subscriptions">
     <label for="url">Blog or feed URL</label>
@@ -200,7 +231,7 @@ export function renderSubscriptionsUI(
   <h2>Your subscriptions</h2>
   ${subItems}`;
 
-  return page("Subscriptions – Blog to EPUB", nav, body);
+  return page("Subscriptions – Blog to EPUB", nav("subscriptions"), body);
 }
 
 function renderSubItem(sub: Subscription): string {
@@ -208,13 +239,14 @@ function renderSubItem(sub: Subscription): string {
     ? `Last checked ${formatRelative(sub.lastChecked)}`
     : "Never checked";
 
-  const epubList = sub.recentEpubs.length === 0
-    ? `<p class="empty" style="margin:.4rem 0 0">No EPUBs yet – new posts will appear here after the next scheduled check.</p>`
-    : `<ul class="sub-epubs">${sub.recentEpubs
+  const articles = sub.recentArticles;
+  const articleList = articles.length === 0
+    ? `<p class="empty" style="margin:.4rem 0 0">No articles yet – new posts will appear here after the next scheduled check.</p>`
+    : `<ul class="sub-epubs">${articles
         .map(
-          (e) =>
-            `<li><a href="/download/${escapeHtml(e.key)}" download>${escapeHtml(e.title)}</a>` +
-            ` <span style="color:#999">(${formatDate(e.createdAt)})</span></li>`,
+          (a) =>
+            `<li><a href="/download/article/${escapeHtml(a.id)}" download>${escapeHtml(a.title)}</a>` +
+            ` <span style="color:#999">(${formatDate(a.createdAt)})</span></li>`,
         )
         .join("")}</ul>`;
 
@@ -232,7 +264,35 @@ function renderSubItem(sub: Subscription): string {
         <button type="submit" class="danger" onclick="return confirm('Remove this subscription?')">Remove</button>
       </form>
     </div>
-    ${epubList}
+    ${articleList}
+  </li>`;
+}
+
+// ---------------------------------------------------------------------------
+// Weekly books page
+// ---------------------------------------------------------------------------
+
+export function renderWeeklyBooksUI(books: WeeklyBookMeta[]): Response {
+  const bookItems = books.length === 0
+    ? `<p class="empty">No weekly books yet. Books are compiled every Monday from your subscription articles.</p>`
+    : `<ul class="book-list">${books.map(renderBookItem).join("")}</ul>`;
+
+  const body = `
+  <h1>Weekly Reading Books</h1>
+  <p class="subtitle">Every Monday, a new EPUB is compiled from all new posts across your <a href="/subscriptions">subscriptions</a> that week.</p>
+  ${bookItems}`;
+
+  return page("Weekly Books – Blog to EPUB", nav("weekly-books"), body);
+}
+
+function renderBookItem(book: WeeklyBookMeta): string {
+  return `
+  <li class="book-item">
+    <div class="book-info">
+      <p class="book-title">${escapeHtml(book.title)}</p>
+      <p class="book-meta">${book.articleCount} article${book.articleCount !== 1 ? "s" : ""} &middot; ${Math.round(book.size / 1024)} KB &middot; ${formatDate(book.createdAt)}</p>
+    </div>
+    <a class="book-download" href="/download/weekly/${escapeHtml(book.weekKey)}" download>Download</a>
   </li>`;
 }
 
@@ -249,7 +309,11 @@ function escapeHtml(str: string): string {
 }
 
 function formatDate(ms: number): string {
-  return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return new Date(ms).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function formatRelative(ms: number): string {

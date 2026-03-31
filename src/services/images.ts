@@ -19,6 +19,7 @@ const DOWNLOAD_TIMEOUT = 10_000; // 10s per image
 export async function processArticleImages(
   html: string,
   baseUrl: string,
+  startIndex = 0,
 ): Promise<{ html: string; images: EpubImage[] }> {
   // Extract all img src URLs
   const imgRegex = /<img\s[^>]*?src="([^"]+)"/g;
@@ -41,7 +42,7 @@ export async function processArticleImages(
 
   // Download and process all images concurrently
   const results = await Promise.allSettled(
-    urls.map((u, i) => downloadAndProcess(u.absolute, i)),
+    urls.map((u, i) => downloadAndProcess(u.absolute, startIndex + i)),
   );
 
   const images: EpubImage[] = [];
