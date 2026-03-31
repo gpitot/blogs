@@ -10,19 +10,21 @@ export interface ExtractedArticle {
   byline: string;
 }
 
-export function extractArticle(rawHtml: string, url: string): ExtractedArticle {
-  const { document } = parseHTML(rawHtml);
+/** Extract the canonical URL from a page's <link rel="canonical" href="...">. */
+export function extractCanonicalUrl(html: string): string | null {
+  const match = html.match(
+    /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i,
+  );
+  if (match) return match[1];
+  // Also handle href before rel
+  const match2 = html.match(
+    /<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/i,
+  );
+  return match2 ? match2[1] : null;
+}
 
-  Object.defineProperty(document, "documentURI", { value: url });
-
-  const reader = new Readability(document);
-  const article = reader.parse();
-
-  if (!article) {
-    throw new Error(`Readability could not extract article from ${url}`);
-  }
-
-  const cleanedContent = sanitizeHtml(article.content ?? "", {
+function sanitizeFeedHtml(html: string, baseUrl: string): string {
+  return sanitizeHtml(html, {
     allowedTags: [
       // HTML content
       "h1", "h2", "h3", "h4", "h5", "h6",
@@ -49,55 +51,22 @@ export function extractArticle(rawHtml: string, url: string): ExtractedArticle {
       img: ["src", "alt"],
       td: ["colspan", "rowspan"],
       th: ["colspan", "rowspan"],
-      // Allow all attributes on SVG and MathML elements
-      svg: ["*"],
-      path: ["*"],
-      circle: ["*"],
-      rect: ["*"],
-      line: ["*"],
-      polyline: ["*"],
-      polygon: ["*"],
-      ellipse: ["*"],
-      g: ["*"],
-      defs: ["*"],
-      use: ["*"],
-      text: ["*"],
-      tspan: ["*"],
-      style: ["*"],
-      clippath: ["*"],
-      mask: ["*"],
-      marker: ["*"],
-      pattern: ["*"],
-      lineargradient: ["*"],
-      radialgradient: ["*"],
-      stop: ["*"],
-      symbol: ["*"],
-      math: ["*"],
-      mrow: ["*"],
-      mi: ["*"],
-      mo: ["*"],
-      mn: ["*"],
-      msup: ["*"],
-      msub: ["*"],
-      msubsup: ["*"],
-      mfrac: ["*"],
-      msqrt: ["*"],
-      mroot: ["*"],
-      mover: ["*"],
-      munder: ["*"],
-      munderover: ["*"],
-      mtable: ["*"],
-      mtr: ["*"],
-      mtd: ["*"],
-      mspace: ["*"],
-      mtext: ["*"],
+      svg: ["*"], path: ["*"], circle: ["*"], rect: ["*"], line: ["*"],
+      polyline: ["*"], polygon: ["*"], ellipse: ["*"], g: ["*"], defs: ["*"],
+      use: ["*"], text: ["*"], tspan: ["*"], style: ["*"], clippath: ["*"],
+      mask: ["*"], marker: ["*"], pattern: ["*"], lineargradient: ["*"],
+      radialgradient: ["*"], stop: ["*"], symbol: ["*"],
+      math: ["*"], mrow: ["*"], mi: ["*"], mo: ["*"], mn: ["*"],
+      msup: ["*"], msub: ["*"], msubsup: ["*"], mfrac: ["*"], msqrt: ["*"],
+      mroot: ["*"], mover: ["*"], munder: ["*"], munderover: ["*"],
+      mtable: ["*"], mtr: ["*"], mtd: ["*"], mspace: ["*"], mtext: ["*"],
       menclose: ["*"],
     },
     transformTags: {
       a: (tagName, attribs) => {
         if (attribs.href && !attribs.href.startsWith("http")) {
           try {
-            attribs.href = new URL(attribs.href, url).href;
+            attribs.href = new URL(attribs.href, baseUrl).href;
           } catch { /* ignore */ }
         }
         return { tagName, attribs };
@@ -105,16 +74,47 @@ export function extractArticle(rawHtml: string, url: string): ExtractedArticle {
       img: (tagName, attribs) => {
         if (attribs.src && !attribs.src.startsWith("http")) {
           try {
-            attribs.src = new URL(attribs.src, url).href;
+            attribs.src = new URL(attribs.src, baseUrl).href;
           } catch { /* ignore */ }
         }
         return { tagName, attribs };
       },
     },
-    // <style> inside <svg> <defs> is needed for SVG class-based styling
     allowVulnerableTags: true,
     parser: { decodeEntities: true },
   });
+}
+
+/**
+ * Sanitize inline feed content (from content:encoded / description / Atom content).
+ * Skips Readability since the feed already provides the article body.
+ */
+export function extractArticleFromFeedContent(
+  feedHtml: string,
+  title: string,
+  url: string,
+): ExtractedArticle {
+  const cleaned = sanitizeFeedHtml(feedHtml, url);
+  return {
+    title,
+    content: toXhtml(cleaned),
+    byline: "",
+  };
+}
+
+export function extractArticle(rawHtml: string, url: string): ExtractedArticle {
+  const { document } = parseHTML(rawHtml);
+
+  Object.defineProperty(document, "documentURI", { value: url });
+
+  const reader = new Readability(document);
+  const article = reader.parse();
+
+  if (!article) {
+    throw new Error(`Readability could not extract article from ${url}`);
+  }
+
+  const cleanedContent = sanitizeFeedHtml(article.content ?? "", url);
 
   return {
     title: article.title ?? "",

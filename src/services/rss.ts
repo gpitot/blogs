@@ -5,6 +5,7 @@ export interface FeedItem {
   title: string;
   link: string;
   pubDate: number; // ms since epoch
+  content: string; // inline HTML content from feed (content:encoded, description, or Atom content)
 }
 
 export interface ParsedFeed {
@@ -64,12 +65,17 @@ function parseRss(doc: HtmlNode): ParsedFeed {
     const guid = childText(item, "guid") || link;
     const pubDateStr = childText(item, "pubdate");
     const pubDate = pubDateStr ? Date.parse(pubDateStr) : Date.now();
+    // Prefer content:encoded (full HTML), fall back to description
+    const contentEncoded = childText(item, "content:encoded");
+    const description = childText(item, "description");
+    const content = contentEncoded || description || "";
 
     if (link) {
       items.push({
         guid: guid || link,
         title,
         link,
+        content,
         pubDate: isNaN(pubDate) ? Date.now() : pubDate,
       });
     }
@@ -107,12 +113,17 @@ function parseAtom(doc: HtmlNode): ParsedFeed {
     const guid = childText(entry, "id") || link;
     const dateStr = childText(entry, "updated") || childText(entry, "published");
     const pubDate = dateStr ? Date.parse(dateStr) : Date.now();
+    // Atom content element (often has type="html") or summary as fallback
+    const contentEl = childText(entry, "content");
+    const summary = childText(entry, "summary");
+    const content = contentEl || summary || "";
 
     if (link) {
       items.push({
         guid: guid || link,
         title,
         link,
+        content,
         pubDate: isNaN(pubDate) ? Date.now() : pubDate,
       });
     }
