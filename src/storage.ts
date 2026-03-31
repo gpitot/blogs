@@ -152,42 +152,6 @@ export async function getPendingArticle(
 }
 
 // ---------------------------------------------------------------------------
-// Weekly queue – tracks articles accumulated since the last weekly book run
-// ---------------------------------------------------------------------------
-
-export interface WeeklyQueueEntry {
-  articleId: string;
-  title: string;
-  subTitle: string;
-  savedAt: number;
-}
-
-const WEEKLY_QUEUE_KEY = "weekly-queue";
-
-export async function getWeeklyQueue(env: Env): Promise<WeeklyQueueEntry[]> {
-  const val = await env.EPUB_CACHE.get(WEEKLY_QUEUE_KEY);
-  if (!val) return [];
-  try {
-    return JSON.parse(val) as WeeklyQueueEntry[];
-  } catch {
-    return [];
-  }
-}
-
-export async function addToWeeklyQueue(
-  env: Env,
-  entry: WeeklyQueueEntry,
-): Promise<void> {
-  const queue = await getWeeklyQueue(env);
-  queue.push(entry);
-  await env.EPUB_CACHE.put(WEEKLY_QUEUE_KEY, JSON.stringify(queue));
-}
-
-export async function clearWeeklyQueue(env: Env): Promise<void> {
-  await env.EPUB_CACHE.delete(WEEKLY_QUEUE_KEY);
-}
-
-// ---------------------------------------------------------------------------
 // Weekly books index
 // ---------------------------------------------------------------------------
 

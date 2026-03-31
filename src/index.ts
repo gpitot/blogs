@@ -20,9 +20,6 @@ import {
   generateId,
   putPendingArticle,
   getPendingArticle,
-  addToWeeklyQueue,
-  getWeeklyQueue,
-  clearWeeklyQueue,
   listWeeklyBooks,
   addWeeklyBook,
   getWeeklyBookData,
@@ -30,6 +27,7 @@ import {
   MAX_RECENT_ARTICLES,
   type Env,
   type Subscription,
+  type PendingArticle,
   type WeeklyBookMeta,
 } from "./storage.ts";
 import {
@@ -334,7 +332,7 @@ async function fetchAndSaveArticle(
   item: FeedItem,
   subId: string,
   subTitle: string,
-): Promise<string | null> {
+): Promise<PendingArticle | null> {
   const resp = await fetch(item.link, {
     signal: AbortSignal.timeout(25000),
     headers: { "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)" },
@@ -346,10 +344,9 @@ async function fetchAndSaveArticle(
 
   const html = await resp.text();
   const article = extractArticle(html, item.link);
-  const id = generateId();
 
-  await putPendingArticle(env, {
-    id,
+  const pending: PendingArticle = {
+    id: generateId(),
     url: item.link,
     title: article.title || item.title || "Article",
     byline: article.byline || "Unknown Author",
@@ -357,12 +354,16 @@ async function fetchAndSaveArticle(
     savedAt: Date.now(),
     subId,
     subTitle,
-  });
+  };
 
-  return id;
+  await putPendingArticle(env, pending);
+  return pending;
 }
 
-async function checkSubscription(env: Env, sub: Subscription): Promise<void> {
+async function checkSubscription(
+  env: Env,
+  sub: Subscription,
+): Promise<PendingArticle[]> {
   const feed = await fetchAndParseFeed(sub.feedUrl);
 
   const seenSet = new Set(sub.seenGuids);
@@ -371,57 +372,37 @@ async function checkSubscription(env: Env, sub: Subscription): Promise<void> {
     .sort((a, b) => b.pubDate - a.pubDate)
     .slice(0, 5);
 
-  const newArticles: Subscription["recentArticles"] = [];
+  const saved: PendingArticle[] = [];
   const newGuids: string[] = [];
 
   for (const item of newItems) {
     newGuids.push(item.guid);
     try {
-      const id = await fetchAndSaveArticle(env, item, sub.id, sub.title);
-      if (id) {
-        const title = item.title || item.link;
-        newArticles.push({ id, title, createdAt: Date.now() });
-        await addToWeeklyQueue(env, {
-          articleId: id,
-          title,
-          subTitle: sub.title,
-          savedAt: Date.now(),
-        });
-      }
+      const article = await fetchAndSaveArticle(env, item, sub.id, sub.title);
+      if (article) saved.push(article);
     } catch (err) {
-      console.error(`[subscriptions] Failed to save ${item.link}:`, err);
+      console.error(`[weekly] Failed to save ${item.link}:`, err);
     }
   }
 
-  const allGuids = [...newGuids, ...sub.seenGuids].slice(0, MAX_SEEN_GUIDS);
-  const allArticles = [...newArticles, ...sub.recentArticles].slice(
-    0,
-    MAX_RECENT_ARTICLES,
-  );
-  console.log(
-    `[subscriptions] Checked "${sub.title}": ${newGuids.length} new items saved.`,
-  );
+  const newRecentArticles = saved.map((a) => ({
+    id: a.id,
+    title: a.title,
+    createdAt: a.savedAt,
+  }));
+
   await putSubscription(env, {
     ...sub,
     lastChecked: Date.now(),
-    seenGuids: allGuids,
-    recentArticles: allArticles,
+    seenGuids: [...newGuids, ...sub.seenGuids].slice(0, MAX_SEEN_GUIDS),
+    recentArticles: [...newRecentArticles, ...sub.recentArticles].slice(
+      0,
+      MAX_RECENT_ARTICLES,
+    ),
   });
-}
 
-async function checkAllSubscriptions(env: Env): Promise<void> {
-  console.log(`[subscriptions] Checking for new posts...`);
-  const subs = await listSubscriptions(env);
-  for (const sub of subs) {
-    try {
-      await checkSubscription(env, sub);
-    } catch (err) {
-      console.error(
-        `[subscriptions] Error checking subscription ${sub.id} (${sub.feedUrl}):`,
-        err,
-      );
-    }
-  }
+  console.log(`[weekly] "${sub.title}": ${saved.length} new articles saved.`);
+  return saved;
 }
 
 function getISOWeekNumber(date: Date): number {
@@ -436,14 +417,26 @@ function getISOWeekNumber(date: Date): number {
   );
 }
 
-async function generateWeeklyBook(env: Env): Promise<void> {
-  const queue = await getWeeklyQueue(env);
-  if (queue.length === 0) {
-    console.log("[weekly-book] No articles queued, skipping.");
+async function runWeeklyJob(env: Env): Promise<void> {
+  console.log("[weekly] Checking subscriptions and compiling book...");
+  const subs = await listSubscriptions(env);
+
+  const allArticles: PendingArticle[] = [];
+  for (const sub of subs) {
+    try {
+      const saved = await checkSubscription(env, sub);
+      allArticles.push(...saved);
+    } catch (err) {
+      console.error(`[weekly] Error checking "${sub.title}":`, err);
+    }
+  }
+
+  if (allArticles.length === 0) {
+    console.log("[weekly] No new articles this week, skipping book generation.");
     return;
   }
 
-  console.log(`[weekly-book] Compiling ${queue.length} articles into book...`);
+  console.log(`[weekly] Compiling ${allArticles.length} articles into book...`);
 
   const now = new Date();
   const weekNum = getISOWeekNumber(now).toString().padStart(2, "0");
@@ -455,19 +448,10 @@ async function generateWeeklyBook(env: Env): Promise<void> {
     timeZone: "UTC",
   })}`;
 
-  const chapters: Array<{ title: string; byline: string; content: string }> =
-    [];
+  const chapters: Array<{ title: string; byline: string; content: string }> = [];
   const allImages: import("./services/images.ts").EpubImage[] = [];
 
-  for (const entry of queue) {
-    const article = await getPendingArticle(env, entry.articleId);
-    if (!article) {
-      console.warn(
-        `[weekly-book] Article ${entry.articleId} not found in KV, skipping.`,
-      );
-      continue;
-    }
-
+  for (const article of allArticles) {
     try {
       const { html: contentWithImages, images } = await processArticleImages(
         article.content,
@@ -481,10 +465,7 @@ async function generateWeeklyBook(env: Env): Promise<void> {
         content: contentWithImages,
       });
     } catch (err) {
-      console.error(
-        `[weekly-book] Image processing failed for ${article.url}, including without images:`,
-        err,
-      );
+      console.error(`[weekly] Image processing failed for ${article.url}:`, err);
       chapters.push({
         title: `${article.subTitle}: ${article.title}`,
         byline: article.byline || "Unknown Author",
@@ -494,12 +475,11 @@ async function generateWeeklyBook(env: Env): Promise<void> {
   }
 
   if (chapters.length === 0) {
-    console.log("[weekly-book] No articles processed successfully.");
+    console.log("[weekly] No articles processed successfully.");
     return;
   }
 
   const epubBytes = generateEpub(bookTitle, "Various Authors", chapters, allImages);
-
   const meta: WeeklyBookMeta = {
     weekKey,
     kvKey: `weekly-book-data:${weekKey}`,
@@ -510,22 +490,14 @@ async function generateWeeklyBook(env: Env): Promise<void> {
   };
 
   await addWeeklyBook(env, meta, epubBytes);
-  await clearWeeklyQueue(env);
-
   console.log(
-    `[weekly-book] Generated "${bookTitle}" with ${chapters.length} chapters (${Math.round(epubBytes.byteLength / 1024)} KB).`,
+    `[weekly] Generated "${bookTitle}" with ${chapters.length} chapters (${Math.round(epubBytes.byteLength / 1024)} KB).`,
   );
 }
 
 export default {
   fetch: app.fetch.bind(app),
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    if (event.cron === "0 0 * * 1") {
-      // Monday midnight UTC – compile the weekly book
-      ctx.waitUntil(generateWeeklyBook(env));
-    } else {
-      // Every hour – check subscriptions for new posts
-      ctx.waitUntil(checkAllSubscriptions(env));
-    }
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(runWeeklyJob(env));
   },
 };
