@@ -1,4 +1,4 @@
-import type { Subscription, WeeklyBookMeta } from "./storage.ts";
+import type { Subscription, WeeklyBookMeta } from "./repositories/types.ts";
 
 // ---------------------------------------------------------------------------
 // Shared styles / layout helpers

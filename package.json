@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@cf-wasm/photon": "^0.3.4",
@@ -18,9 +20,11 @@
     "sanitize-html": "^2.17.2"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.14.0",
     "@cloudflare/workers-types": "^4.20260329.1",
     "@types/sanitize-html": "^2.16.1",
     "typescript": "^5.7.2",
+    "vitest": "^4.1.2",
     "wrangler": "^3.0.0"
   }
 }
