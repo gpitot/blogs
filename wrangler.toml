@@ -9,6 +9,6 @@ id = "placeholder-replace-with-real-id"
 preview_id = "placeholder-replace-with-real-preview-id"
 
 [triggers]
-# Check subscriptions for new posts every hour
-crons = ["0 * * * *"]
+# Check subscriptions for new posts every hour; compile weekly book on Mondays
+crons = ["0 * * * *", "0 0 * * 1"]
 

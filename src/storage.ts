@@ -6,10 +6,17 @@ export interface Env {
 // Subscription types
 // ---------------------------------------------------------------------------
 
+/** @deprecated Use RecentArticle instead – kept for reading legacy KV data. */
 export interface RecentEpub {
-  key: string;       // hex hash (no "epub:" prefix) – used in /download/:key
+  key: string;
   title: string;
-  createdAt: number; // ms since epoch
+  createdAt: number;
+}
+
+export interface RecentArticle {
+  id: string;       // pending article ID – used in /download/article/:id
+  title: string;
+  createdAt: number;
 }
 
 export interface Subscription {
@@ -19,14 +26,19 @@ export interface Subscription {
   title: string;     // feed title
   addedAt: number;
   lastChecked: number | null;
-  seenGuids: string[];    // de-dup ring-buffer (capped at MAX_SEEN_GUIDS)
-  recentEpubs: RecentEpub[]; // capped at MAX_RECENT_EPUBS
+  seenGuids: string[];       // de-dup ring-buffer (capped at MAX_SEEN_GUIDS)
+  recentEpubs?: RecentEpub[]; // legacy field – kept for backward compat reads
+  recentArticles: RecentArticle[]; // capped at MAX_RECENT_ARTICLES
 }
 
 export const MAX_SEEN_GUIDS = 200;
-export const MAX_RECENT_EPUBS = 20;
+export const MAX_RECENT_ARTICLES = 20;
 
 const SUBS_INDEX_KEY = "subs:index";
+
+// ---------------------------------------------------------------------------
+// Single-article EPUB cache (used by /convert route only)
+// ---------------------------------------------------------------------------
 
 interface CacheEntry {
   kvKey: string;
@@ -106,6 +118,137 @@ export async function getEpub(
 }
 
 // ---------------------------------------------------------------------------
+// Pending articles – extracted HTML saved for lazy EPUB generation and
+// inclusion in the weekly book. TTL is 30 days.
+// ---------------------------------------------------------------------------
+
+export interface PendingArticle {
+  id: string;
+  url: string;
+  title: string;
+  byline: string;
+  content: string;  // cleaned XHTML content (no images embedded yet)
+  savedAt: number;
+  subId: string;
+  subTitle: string;
+}
+
+const PENDING_ARTICLE_TTL = 30 * 24 * 60 * 60; // 30 days in seconds
+
+export async function putPendingArticle(
+  env: Env,
+  article: PendingArticle,
+): Promise<void> {
+  await env.EPUB_CACHE.put(
+    `pending-article:${article.id}`,
+    JSON.stringify(article),
+    { expirationTtl: PENDING_ARTICLE_TTL },
+  );
+}
+
+export async function getPendingArticle(
+  env: Env,
+  id: string,
+): Promise<PendingArticle | null> {
+  const val = await env.EPUB_CACHE.get(`pending-article:${id}`);
+  if (!val) return null;
+  try {
+    return JSON.parse(val) as PendingArticle;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Weekly queue – tracks articles accumulated since the last weekly book run
+// ---------------------------------------------------------------------------
+
+export interface WeeklyQueueEntry {
+  articleId: string;
+  title: string;
+  subTitle: string;
+  savedAt: number;
+}
+
+const WEEKLY_QUEUE_KEY = "weekly-queue";
+
+export async function getWeeklyQueue(env: Env): Promise<WeeklyQueueEntry[]> {
+  const val = await env.EPUB_CACHE.get(WEEKLY_QUEUE_KEY);
+  if (!val) return [];
+  try {
+    return JSON.parse(val) as WeeklyQueueEntry[];
+  } catch {
+    return [];
+  }
+}
+
+export async function addToWeeklyQueue(
+  env: Env,
+  entry: WeeklyQueueEntry,
+): Promise<void> {
+  const queue = await getWeeklyQueue(env);
+  queue.push(entry);
+  await env.EPUB_CACHE.put(WEEKLY_QUEUE_KEY, JSON.stringify(queue));
+}
+
+export async function clearWeeklyQueue(env: Env): Promise<void> {
+  await env.EPUB_CACHE.delete(WEEKLY_QUEUE_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Weekly books index
+// ---------------------------------------------------------------------------
+
+export interface WeeklyBookMeta {
+  weekKey: string;   // e.g. "2026-W14"
+  kvKey: string;     // KV key for the binary EPUB data
+  title: string;     // e.g. "Weekly Reading – March 30, 2026"
+  createdAt: number;
+  articleCount: number;
+  size: number;
+}
+
+const WEEKLY_BOOKS_INDEX_KEY = "weekly-books-index";
+const MAX_WEEKLY_BOOKS = 8;
+const WEEKLY_BOOK_TTL = 60 * 24 * 60 * 60; // 60 days in seconds
+
+export async function listWeeklyBooks(env: Env): Promise<WeeklyBookMeta[]> {
+  const val = await env.EPUB_CACHE.get(WEEKLY_BOOKS_INDEX_KEY);
+  if (!val) return [];
+  try {
+    return JSON.parse(val) as WeeklyBookMeta[];
+  } catch {
+    return [];
+  }
+}
+
+export async function addWeeklyBook(
+  env: Env,
+  meta: WeeklyBookMeta,
+  data: Uint8Array,
+): Promise<void> {
+  await env.EPUB_CACHE.put(meta.kvKey, data.buffer as ArrayBuffer, {
+    expirationTtl: WEEKLY_BOOK_TTL,
+  });
+  const books = await listWeeklyBooks(env);
+  const updated = [meta, ...books.filter((b) => b.weekKey !== meta.weekKey)]
+    .slice(0, MAX_WEEKLY_BOOKS);
+  await env.EPUB_CACHE.put(WEEKLY_BOOKS_INDEX_KEY, JSON.stringify(updated));
+}
+
+export async function getWeeklyBookData(
+  env: Env,
+  weekKey: string,
+): Promise<{ meta: WeeklyBookMeta; buf: ArrayBuffer } | null> {
+  const books = await listWeeklyBooks(env);
+  const meta = books.find((b) => b.weekKey === weekKey);
+  if (!meta) return null;
+  const buf = await env.EPUB_CACHE.get(meta.kvKey, { type: "arrayBuffer" });
+  if (!buf) return null;
+  return { meta, buf };
+}
+
+// ---------------------------------------------------------------------------
 // Subscription storage
 // ---------------------------------------------------------------------------
 
@@ -128,11 +271,17 @@ async function listSubscriptionIds(env: Env): Promise<string[]> {
   }
 }
 
-export async function getSubscription(env: Env, id: string): Promise<Subscription | null> {
+export async function getSubscription(
+  env: Env,
+  id: string,
+): Promise<Subscription | null> {
   const val = await env.EPUB_CACHE.get(`sub:${id}`);
   if (!val) return null;
   try {
-    return JSON.parse(val) as Subscription;
+    const sub = JSON.parse(val) as Subscription;
+    // Ensure new field exists when reading legacy data
+    if (!sub.recentArticles) sub.recentArticles = [];
+    return sub;
   } catch {
     return null;
   }
@@ -144,7 +293,10 @@ export async function listSubscriptions(env: Env): Promise<Subscription[]> {
   return subs.filter(Boolean) as Subscription[];
 }
 
-export async function putSubscription(env: Env, sub: Subscription): Promise<void> {
+export async function putSubscription(
+  env: Env,
+  sub: Subscription,
+): Promise<void> {
   await env.EPUB_CACHE.put(`sub:${sub.id}`, JSON.stringify(sub));
 
   const ids = await listSubscriptionIds(env);
@@ -154,8 +306,14 @@ export async function putSubscription(env: Env, sub: Subscription): Promise<void
   }
 }
 
-export async function deleteSubscription(env: Env, id: string): Promise<void> {
+export async function deleteSubscription(
+  env: Env,
+  id: string,
+): Promise<void> {
   await env.EPUB_CACHE.delete(`sub:${id}`);
   const ids = await listSubscriptionIds(env);
-  await env.EPUB_CACHE.put(SUBS_INDEX_KEY, JSON.stringify(ids.filter((i) => i !== id)));
+  await env.EPUB_CACHE.put(
+    SUBS_INDEX_KEY,
+    JSON.stringify(ids.filter((i) => i !== id)),
+  );
 }

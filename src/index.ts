@@ -18,17 +18,30 @@ import {
   putSubscription,
   deleteSubscription,
   generateId,
+  putPendingArticle,
+  getPendingArticle,
+  addToWeeklyQueue,
+  getWeeklyQueue,
+  clearWeeklyQueue,
+  listWeeklyBooks,
+  addWeeklyBook,
+  getWeeklyBookData,
   MAX_SEEN_GUIDS,
-  MAX_RECENT_EPUBS,
+  MAX_RECENT_ARTICLES,
   type Env,
   type Subscription,
+  type WeeklyBookMeta,
 } from "./storage.ts";
-import { renderUI, renderSubscriptionsUI } from "./ui.ts";
+import {
+  renderUI,
+  renderSubscriptionsUI,
+  renderWeeklyBooksUI,
+} from "./ui.ts";
 
 const app = new Hono<{ Bindings: Env }>();
 
 // ---------------------------------------------------------------------------
-// Existing single-article conversion
+// Single-article conversion (on-demand)
 // ---------------------------------------------------------------------------
 
 app.get("/", (c) => {
@@ -86,7 +99,6 @@ app.post("/convert", async (c) => {
     return renderUI({ error: `Could not extract article content: ${msg}` });
   }
 
-  // Download and process images for offline reading
   const { html: contentWithImages, images } = await processArticleImages(
     article.content,
     blogUrl,
@@ -147,6 +159,46 @@ app.get("/download/:key", async (c) => {
     );
   }
   return response;
+});
+
+// ---------------------------------------------------------------------------
+// Per-article download (subscription articles – lazy EPUB generation)
+// ---------------------------------------------------------------------------
+
+app.get("/download/article/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!/^[a-f0-9]+$/.test(id)) {
+    return c.notFound();
+  }
+
+  const article = await getPendingArticle(c.env, id);
+  if (!article) {
+    return c.html(
+      `<html><body><p>Article not found or expired. <a href="/subscriptions">View subscriptions</a></p></body></html>`,
+      404,
+    );
+  }
+
+  const { html: contentWithImages, images } = await processArticleImages(
+    article.content,
+    article.url,
+  );
+
+  const epubBytes = generateEpub(
+    article.title,
+    article.byline || "Unknown Author",
+    [{ title: article.title, byline: article.byline, content: contentWithImages }],
+    images,
+  );
+
+  const safeTitle = article.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
+  return new Response(epubBytes, {
+    headers: {
+      "Content-Type": "application/epub+zip",
+      "Content-Disposition": `attachment; filename="${safeTitle}.epub"`,
+      "Content-Length": epubBytes.byteLength.toString(),
+    },
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -215,14 +267,14 @@ app.post("/subscriptions", async (c) => {
       .slice(5)
       .map((i) => i.guid)
       .slice(0, MAX_SEEN_GUIDS),
-    recentEpubs: [],
+    recentArticles: [],
   };
 
   await putSubscription(c.env, sub);
 
   const subs = await listSubscriptions(c.env);
   return renderSubscriptionsUI(subs, {
-    success: `Subscribed to "${sub.title}". New posts will be automatically converted to EPUB.`,
+    success: `Subscribed to "${sub.title}". New posts will appear in your weekly book.`,
   });
 });
 
@@ -236,20 +288,53 @@ app.post("/subscriptions/:id/delete", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// Scheduled handler – checks all subscriptions for new posts
+// Weekly books
 // ---------------------------------------------------------------------------
 
-async function convertArticleToEpub(
-  env: Env,
-  item: FeedItem,
-): Promise<string | null> {
-  const cacheKey = await urlToKey(item.link);
+app.get("/weekly-books", async (c) => {
+  const books = await listWeeklyBooks(c.env);
+  return renderWeeklyBooksUI(books);
+});
 
-  const cached = await getCached(env, cacheKey);
-  if (cached) {
-    return cacheKey.replace("epub:", "");
+app.get("/download/weekly/:weekKey", async (c) => {
+  const weekKey = c.req.param("weekKey");
+  if (!/^\d{4}-W\d{2}$/.test(weekKey)) {
+    return c.notFound();
   }
 
+  const result = await getWeeklyBookData(c.env, weekKey);
+  if (!result) {
+    return c.html(
+      `<html><body><p>Weekly book not found or expired. <a href="/weekly-books">View all books</a></p></body></html>`,
+      404,
+    );
+  }
+
+  const safeTitle = result.meta.title
+    .replace(/[^a-zA-Z0-9\s\-_.]/g, "")
+    .trim() || "weekly-reading";
+
+  return new Response(result.buf, {
+    headers: {
+      "Content-Type": "application/epub+zip",
+      "Content-Disposition": `attachment; filename="${safeTitle}.epub"`,
+      "Content-Length": result.meta.size.toString(),
+      "Cache-Control": "public, max-age=86400",
+    },
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scheduled handler
+// ---------------------------------------------------------------------------
+
+/** Fetch a new subscription article, save its content for later use. */
+async function fetchAndSaveArticle(
+  env: Env,
+  item: FeedItem,
+  subId: string,
+  subTitle: string,
+): Promise<string | null> {
   const resp = await fetch(item.link, {
     signal: AbortSignal.timeout(25000),
     headers: { "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)" },
@@ -261,71 +346,66 @@ async function convertArticleToEpub(
 
   const html = await resp.text();
   const article = extractArticle(html, item.link);
+  const id = generateId();
 
-  const { html: contentWithImages, images } = await processArticleImages(
-    article.content,
-    item.link,
-  );
-  article.content = contentWithImages;
-
-  const epubBytes = generateEpub(
-    article.title || item.title || "Article",
-    article.byline || "Unknown Author",
-    [article],
-    images,
-  );
-
-  const kvKey = `epub-data:${cacheKey.replace("epub:", "")}`;
-  await putEpub(env, kvKey, epubBytes);
-  await putCached(env, cacheKey, {
-    kvKey,
+  await putPendingArticle(env, {
+    id,
+    url: item.link,
     title: article.title || item.title || "Article",
-    createdAt: Date.now(),
-    size: epubBytes.byteLength,
+    byline: article.byline || "Unknown Author",
+    content: article.content,
+    savedAt: Date.now(),
+    subId,
+    subTitle,
   });
 
-  return cacheKey.replace("epub:", "");
+  return id;
 }
 
 async function checkSubscription(env: Env, sub: Subscription): Promise<void> {
   const feed = await fetchAndParseFeed(sub.feedUrl);
 
   const seenSet = new Set(sub.seenGuids);
-  // Only process items we haven't seen yet, newest first, up to 5
   const newItems = feed.items
     .filter((item) => !seenSet.has(item.guid))
     .sort((a, b) => b.pubDate - a.pubDate)
     .slice(0, 5);
 
-  const newEpubs: Subscription["recentEpubs"] = [];
+  const newArticles: Subscription["recentArticles"] = [];
   const newGuids: string[] = [];
 
   for (const item of newItems) {
     newGuids.push(item.guid);
     try {
-      const key = await convertArticleToEpub(env, item);
-      if (key) {
-        newEpubs.push({
-          key,
-          title: item.title || item.link,
-          createdAt: Date.now(),
+      const id = await fetchAndSaveArticle(env, item, sub.id, sub.title);
+      if (id) {
+        const title = item.title || item.link;
+        newArticles.push({ id, title, createdAt: Date.now() });
+        await addToWeeklyQueue(env, {
+          articleId: id,
+          title,
+          subTitle: sub.title,
+          savedAt: Date.now(),
         });
       }
     } catch (err) {
-      console.error(`[subscriptions] Failed to convert ${item.link}:`, err);
+      console.error(`[subscriptions] Failed to save ${item.link}:`, err);
     }
   }
 
   const allGuids = [...newGuids, ...sub.seenGuids].slice(0, MAX_SEEN_GUIDS);
-  const allEpubs = [...newEpubs, ...sub.recentEpubs].slice(0, MAX_RECENT_EPUBS);
+  const allArticles = [...newArticles, ...sub.recentArticles].slice(
+    0,
+    MAX_RECENT_ARTICLES,
+  );
   console.log(
-    `[subscriptions] Checked "${sub.title}": ${newGuids.length} new items, ${newEpubs.length} new EPUBs.`,
+    `[subscriptions] Checked "${sub.title}": ${newGuids.length} new items saved.`,
   );
   await putSubscription(env, {
     ...sub,
     lastChecked: Date.now(),
     seenGuids: allGuids,
-    recentEpubs: allEpubs,
+    recentArticles: allArticles,
   });
 }
 
@@ -344,9 +424,108 @@ async function checkAllSubscriptions(env: Env): Promise<void> {
   }
 }
 
+function getISOWeekNumber(date: Date): number {
+  const d = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(
+    ((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7,
+  );
+}
+
+async function generateWeeklyBook(env: Env): Promise<void> {
+  const queue = await getWeeklyQueue(env);
+  if (queue.length === 0) {
+    console.log("[weekly-book] No articles queued, skipping.");
+    return;
+  }
+
+  console.log(`[weekly-book] Compiling ${queue.length} articles into book...`);
+
+  const now = new Date();
+  const weekNum = getISOWeekNumber(now).toString().padStart(2, "0");
+  const weekKey = `${now.getUTCFullYear()}-W${weekNum}`;
+  const bookTitle = `Weekly Reading – ${now.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  })}`;
+
+  const chapters: Array<{ title: string; byline: string; content: string }> =
+    [];
+  const allImages: import("./services/images.ts").EpubImage[] = [];
+
+  for (const entry of queue) {
+    const article = await getPendingArticle(env, entry.articleId);
+    if (!article) {
+      console.warn(
+        `[weekly-book] Article ${entry.articleId} not found in KV, skipping.`,
+      );
+      continue;
+    }
+
+    try {
+      const { html: contentWithImages, images } = await processArticleImages(
+        article.content,
+        article.url,
+        allImages.length,
+      );
+      allImages.push(...images);
+      chapters.push({
+        title: `${article.subTitle}: ${article.title}`,
+        byline: article.byline || "Unknown Author",
+        content: contentWithImages,
+      });
+    } catch (err) {
+      console.error(
+        `[weekly-book] Image processing failed for ${article.url}, including without images:`,
+        err,
+      );
+      chapters.push({
+        title: `${article.subTitle}: ${article.title}`,
+        byline: article.byline || "Unknown Author",
+        content: article.content,
+      });
+    }
+  }
+
+  if (chapters.length === 0) {
+    console.log("[weekly-book] No articles processed successfully.");
+    return;
+  }
+
+  const epubBytes = generateEpub(bookTitle, "Various Authors", chapters, allImages);
+
+  const meta: WeeklyBookMeta = {
+    weekKey,
+    kvKey: `weekly-book-data:${weekKey}`,
+    title: bookTitle,
+    createdAt: Date.now(),
+    articleCount: chapters.length,
+    size: epubBytes.byteLength,
+  };
+
+  await addWeeklyBook(env, meta, epubBytes);
+  await clearWeeklyQueue(env);
+
+  console.log(
+    `[weekly-book] Generated "${bookTitle}" with ${chapters.length} chapters (${Math.round(epubBytes.byteLength / 1024)} KB).`,
+  );
+}
+
 export default {
   fetch: app.fetch.bind(app),
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(checkAllSubscriptions(env));
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    if (event.cron === "0 0 * * 1") {
+      // Monday midnight UTC – compile the weekly book
+      ctx.waitUntil(generateWeeklyBook(env));
+    } else {
+      // Every hour – check subscriptions for new posts
+      ctx.waitUntil(checkAllSubscriptions(env));
+    }
   },
 };
