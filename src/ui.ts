@@ -239,7 +239,7 @@ function renderSubItem(sub: Subscription): string {
     ? `Last checked ${formatRelative(sub.lastChecked)}`
     : "Never checked";
 
-  const articles = sub.recentArticles ?? [];
+  const articles = sub.recentArticles;
   const articleList = articles.length === 0
     ? `<p class="empty" style="margin:.4rem 0 0">No articles yet – new posts will appear here after the next scheduled check.</p>`
     : `<ul class="sub-epubs">${articles

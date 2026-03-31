@@ -6,13 +6,6 @@ export interface Env {
 // Subscription types
 // ---------------------------------------------------------------------------
 
-/** @deprecated Use RecentArticle instead – kept for reading legacy KV data. */
-export interface RecentEpub {
-  key: string;
-  title: string;
-  createdAt: number;
-}
-
 export interface RecentArticle {
   id: string;       // pending article ID – used in /download/article/:id
   title: string;
@@ -27,7 +20,6 @@ export interface Subscription {
   addedAt: number;
   lastChecked: number | null;
   seenGuids: string[];       // de-dup ring-buffer (capped at MAX_SEEN_GUIDS)
-  recentEpubs?: RecentEpub[]; // legacy field – kept for backward compat reads
   recentArticles: RecentArticle[]; // capped at MAX_RECENT_ARTICLES
 }
 
@@ -278,10 +270,7 @@ export async function getSubscription(
   const val = await env.EPUB_CACHE.get(`sub:${id}`);
   if (!val) return null;
   try {
-    const sub = JSON.parse(val) as Subscription;
-    // Ensure new field exists when reading legacy data
-    if (!sub.recentArticles) sub.recentArticles = [];
-    return sub;
+    return JSON.parse(val) as Subscription;
   } catch {
     return null;
   }
