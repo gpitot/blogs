@@ -21,7 +21,7 @@ export class ConversionService {
   async convertSingleArticle(
     url: string,
     html: string,
-  ): Promise<{ cacheKey: string; epubBytes: Uint8Array }> {
+  ): Promise<{ cacheKey: string; epubBytes: Uint8Array; title: string }> {
     const cacheKey = await urlToKey(url);
 
     const article = extractArticle(html, url);
@@ -46,7 +46,7 @@ export class ConversionService {
       size: epubBytes.byteLength,
     });
 
-    return { cacheKey, epubBytes };
+    return { cacheKey, epubBytes, title: article.title || "Article" };
   }
 
   async convertArticleToEpub(article: PendingArticle): Promise<Uint8Array> {

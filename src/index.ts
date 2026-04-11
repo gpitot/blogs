@@ -11,7 +11,8 @@ import { ConversionService } from "./services/conversion.service.ts";
 import { detectFeedUrl, fetchAndParseFeed } from "./services/rss.ts";
 import { processArticleImages } from "./services/images.ts";
 import { urlToKey } from "./utils.ts";
-import { renderUI, renderSubscriptionsUI, renderWeeklyBooksUI } from "./ui.ts";
+import { renderUI, renderSubscriptionsUI, renderWeeklyBooksUI, renderEmailFormUI } from "./ui.ts";
+import { sendEpubEmail } from "./services/email.service.ts";
 
 const FETCH_HEADERS = {
   "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)",
@@ -49,25 +50,32 @@ const app = new Hono<{ Bindings: Env }>();
 // ---------------------------------------------------------------------------
 
 app.get("/", (c) => {
-  return renderUI();
+  return renderUI({ emailEnabled: !!c.env.RESEND_API_KEY });
 });
 
 app.post("/convert", async (c) => {
+  const emailEnabled = !!c.env.RESEND_API_KEY;
   let blogUrl: string;
+  let emailAddress: string | null = null;
   try {
     const body = await c.req.formData();
     const raw = body.get("url");
     if (!raw || typeof raw !== "string") {
-      return renderUI({ error: "Please provide a URL." });
+      return renderUI({ error: "Please provide a URL.", emailEnabled });
     }
     const parsed = new URL(raw.trim());
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return renderUI({ error: "Only http and https URLs are supported." });
+      return renderUI({ error: "Only http and https URLs are supported.", emailEnabled });
     }
     blogUrl = parsed.href;
+    const rawEmail = body.get("email");
+    if (rawEmail && typeof rawEmail === "string" && rawEmail.trim()) {
+      emailAddress = rawEmail.trim();
+    }
   } catch {
     return renderUI({
       error: "Invalid URL. Please enter a valid blog post URL.",
+      emailEnabled,
     });
   }
 
@@ -76,6 +84,32 @@ app.post("/convert", async (c) => {
   const cacheKey = await urlToKey(blogUrl);
   const cached = await conversion.getCachedConversion(cacheKey);
   if (cached) {
+    if (emailAddress && c.env.RESEND_API_KEY) {
+      try {
+        const buf = await conversion.getEpubData(cached.kvKey);
+        if (buf) {
+          const safeTitle = cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
+          await sendEpubEmail({
+            apiKey: c.env.RESEND_API_KEY,
+            fromAddress: c.env.RESEND_FROM_ADDRESS,
+            to: emailAddress,
+            title: cached.title,
+            filename: `${safeTitle}.epub`,
+            epubBytes: new Uint8Array(buf),
+          });
+        }
+        const shortKey = cacheKey.replace("epub:", "");
+        return renderUI({
+          emailEnabled,
+          emailSentTo: emailAddress,
+          downloadUrl: `/download/${shortKey}`,
+          downloadTitle: cached.title,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return renderUI({ error: `Failed to send email: ${msg}`, emailEnabled });
+      }
+    }
     return c.redirect(`/download/${cacheKey.replace("epub:", "")}`, 303);
   }
 
@@ -88,23 +122,47 @@ app.post("/convert", async (c) => {
     if (!resp.ok) {
       return renderUI({
         error: `Could not fetch that URL (HTTP ${resp.status}). Is it publicly accessible?`,
+        emailEnabled,
       });
     }
     html = await resp.text();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return renderUI({ error: `Failed to fetch the URL: ${msg}` });
+    return renderUI({ error: `Failed to fetch the URL: ${msg}`, emailEnabled });
   }
 
   try {
     const result = await conversion.convertSingleArticle(blogUrl, html);
+    if (emailAddress && c.env.RESEND_API_KEY) {
+      try {
+        const safeTitle = result.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
+        await sendEpubEmail({
+          apiKey: c.env.RESEND_API_KEY,
+          fromAddress: c.env.RESEND_FROM_ADDRESS,
+          to: emailAddress,
+          title: result.title,
+          filename: `${safeTitle}.epub`,
+          epubBytes: result.epubBytes,
+        });
+        const shortKey = result.cacheKey.replace("epub:", "");
+        return renderUI({
+          emailEnabled,
+          emailSentTo: emailAddress,
+          downloadUrl: `/download/${shortKey}`,
+          downloadTitle: result.title,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return renderUI({ error: `Failed to send email: ${msg}`, emailEnabled });
+      }
+    }
     return c.redirect(
       `/download/${result.cacheKey.replace("epub:", "")}`,
       303,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return renderUI({ error: `Failed to convert article: ${msg}` });
+    return renderUI({ error: `Failed to convert article: ${msg}`, emailEnabled });
   }
 });
 
@@ -177,18 +235,19 @@ app.get("/download/article/:id", async (c) => {
 app.get("/subscriptions", async (c) => {
   const { blogs } = createServices(c.env);
   const subs = await blogs.listSubscriptions();
-  return renderSubscriptionsUI(subs);
+  return renderSubscriptionsUI(subs, { emailEnabled: !!c.env.RESEND_API_KEY });
 });
 
 app.post("/subscriptions", async (c) => {
   const body = await c.req.formData();
   const raw = body.get("url");
+  const emailEnabled = !!c.env.RESEND_API_KEY;
 
   const { blogs } = createServices(c.env);
 
   if (!raw || typeof raw !== "string") {
     const subs = await blogs.listSubscriptions();
-    return renderSubscriptionsUI(subs, { error: "Please provide a URL." });
+    return renderSubscriptionsUI(subs, { error: "Please provide a URL.", emailEnabled });
   }
 
   let siteUrl: string;
@@ -198,23 +257,25 @@ app.post("/subscriptions", async (c) => {
       const subs = await blogs.listSubscriptions();
       return renderSubscriptionsUI(subs, {
         error: "Only http and https URLs are supported.",
+        emailEnabled,
       });
     }
     siteUrl = parsed.href;
   } catch {
     const subs = await blogs.listSubscriptions();
-    return renderSubscriptionsUI(subs, { error: "Invalid URL." });
+    return renderSubscriptionsUI(subs, { error: "Invalid URL.", emailEnabled });
   }
 
   const result = await blogs.subscribe(siteUrl);
   const subs = await blogs.listSubscriptions();
 
   if ("error" in result) {
-    return renderSubscriptionsUI(subs, { error: result.error });
+    return renderSubscriptionsUI(subs, { error: result.error, emailEnabled });
   }
 
   return renderSubscriptionsUI(subs, {
     success: `Subscribed to "${result.subscription.title}". New posts will appear in your weekly book.`,
+    emailEnabled,
   });
 });
 
@@ -233,7 +294,7 @@ app.post("/subscriptions/:id/delete", async (c) => {
 app.get("/weekly-books", async (c) => {
   const { conversion } = createServices(c.env);
   const books = await conversion.listWeeklyBooks();
-  return renderWeeklyBooksUI(books);
+  return renderWeeklyBooksUI(books, { emailEnabled: !!c.env.RESEND_API_KEY });
 });
 
 app.get("/download/weekly/:weekKey", async (c) => {
@@ -260,6 +321,121 @@ app.get("/download/weekly/:weekKey", async (c) => {
       "Cache-Control": "public, max-age=86400",
     },
   });
+});
+
+// ---------------------------------------------------------------------------
+// Email delivery
+// ---------------------------------------------------------------------------
+
+app.get("/email/:type/:id", async (c) => {
+  const type = c.req.param("type");
+  const id = c.req.param("id");
+
+  if (!c.env.RESEND_API_KEY) return c.notFound();
+
+  const { conversion, posts } = createServices(c.env);
+
+  if (type === "weekly") {
+    if (!/^\d{4}-W\d{2}$/.test(id)) return c.notFound();
+    const books = await conversion.listWeeklyBooks();
+    const book = books.find((b) => b.weekKey === id);
+    if (!book) {
+      return c.html(
+        `<html><body><p>Weekly book not found or expired. <a href="/weekly-books">View all books</a></p></body></html>`,
+        404,
+      );
+    }
+    return renderEmailFormUI({ epubType: "weekly", epubId: id, title: book.title, backUrl: "/weekly-books" });
+  }
+
+  if (type === "article") {
+    if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
+    const article = await posts.getArticle(id);
+    if (!article) {
+      return c.html(
+        `<html><body><p>Article not found or expired. <a href="/subscriptions">View subscriptions</a></p></body></html>`,
+        404,
+      );
+    }
+    return renderEmailFormUI({ epubType: "article", epubId: id, title: article.title, backUrl: "/subscriptions" });
+  }
+
+  return c.notFound();
+});
+
+app.post("/send-epub", async (c) => {
+  const body = await c.req.formData();
+  const emailRaw = body.get("email");
+  const epubType = body.get("epub_type");
+  const epubId = body.get("epub_id");
+
+  const email = typeof emailRaw === "string" ? emailRaw.trim() : "";
+  const type = typeof epubType === "string" ? epubType : "";
+  const id = typeof epubId === "string" ? epubId : "";
+
+  const makeFormPage = (opts: { error?: string; success?: string }) =>
+    renderEmailFormUI({
+      epubType: type,
+      epubId: id,
+      title: "",
+      backUrl: type === "weekly" ? "/weekly-books" : "/subscriptions",
+      email,
+      ...opts,
+    });
+
+  if (!email) {
+    return makeFormPage({ error: "Please provide an email address." });
+  }
+
+  if (!c.env.RESEND_API_KEY) {
+    return makeFormPage({ error: "Email delivery is not configured." });
+  }
+
+  const { conversion, posts } = createServices(c.env);
+
+  try {
+    let epubBytes: Uint8Array;
+    let title: string;
+    let filename: string;
+
+    if (type === "weekly") {
+      if (!/^\d{4}-W\d{2}$/.test(id)) return c.notFound();
+      const result = await conversion.getWeeklyBook(id);
+      if (!result) return makeFormPage({ error: "Weekly book not found or expired." });
+      epubBytes = new Uint8Array(result.buf);
+      title = result.meta.title;
+      filename = `${result.meta.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "weekly-reading"}.epub`;
+    } else if (type === "article") {
+      if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
+      const article = await posts.getArticle(id);
+      if (!article) return makeFormPage({ error: "Article not found or expired." });
+      epubBytes = await conversion.convertArticleToEpub(article);
+      title = article.title;
+      filename = `${article.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article"}.epub`;
+    } else {
+      return c.notFound();
+    }
+
+    await sendEpubEmail({
+      apiKey: c.env.RESEND_API_KEY,
+      fromAddress: c.env.RESEND_FROM_ADDRESS,
+      to: email,
+      title,
+      filename,
+      epubBytes,
+    });
+
+    return renderEmailFormUI({
+      epubType: type,
+      epubId: id,
+      title,
+      backUrl: type === "weekly" ? "/weekly-books" : "/subscriptions",
+      success: `EPUB sent to ${email}`,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return makeFormPage({ error: `Failed to send email: ${msg}` });
+  }
 });
 
 // ---------------------------------------------------------------------------

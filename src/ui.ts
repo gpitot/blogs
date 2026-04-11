@@ -18,7 +18,7 @@ const baseStyles = `
   h2 { font-size: 1.25rem; margin: 1.75rem 0 .75rem; }
   p.subtitle { color: #555; margin-top: 0; margin-bottom: 1.5rem; }
   label { display: block; font-weight: 500; margin-bottom: .35rem; }
-  input[type=url], input[type=text] {
+  input[type=url], input[type=text], input[type=email] {
     width: 100%;
     padding: .55rem .75rem;
     font-size: 1rem;
@@ -26,7 +26,7 @@ const baseStyles = `
     border-radius: 6px;
     background: #fff;
   }
-  input[type=url]:focus, input[type=text]:focus {
+  input[type=url]:focus, input[type=text]:focus, input[type=email]:focus {
     outline: 2px solid #0070f3;
     border-color: transparent;
   }
@@ -119,6 +119,15 @@ const baseStyles = `
     white-space: nowrap;
   }
   .book-download:hover { background: #005bcc; }
+  .book-actions { display: flex; flex-direction: column; align-items: flex-end; gap: .4rem; flex-shrink: 0; }
+  .email-link {
+    font-size: .8rem;
+    color: #0070f3;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .email-link:hover { text-decoration: underline; }
+  .sub-epubs .email-link { margin-left: .4rem; }
 `;
 
 function page(title: string, nav: string, body: string): Response {
@@ -157,6 +166,8 @@ interface UIOptions {
   error?: string;
   downloadUrl?: string;
   downloadTitle?: string;
+  emailSentTo?: string;
+  emailEnabled?: boolean;
 }
 
 export function renderUI(options: UIOptions = {}): Response {
@@ -174,6 +185,15 @@ export function renderUI(options: UIOptions = {}): Response {
       required
       autocomplete="off"
     />
+    ${options.emailEnabled ? `
+    <label for="email" style="margin-top:.85rem">Email address <span style="font-weight:400;color:#888">(optional &mdash; receive EPUB in your inbox)</span></label>
+    <input
+      type="email"
+      id="email"
+      name="email"
+      placeholder="you@example.com"
+      autocomplete="email"
+    />` : ""}
     <br/>
     <button type="submit">Convert to EPUB</button>
   </form>
@@ -181,8 +201,11 @@ export function renderUI(options: UIOptions = {}): Response {
   ${options.error ? `<div class="error">${escapeHtml(options.error)}</div>` : ""}
   ${options.downloadUrl
     ? `<div class="success">
-        Your EPUB is ready: <a href="${escapeHtml(options.downloadUrl)}" download>
-          ${escapeHtml(options.downloadTitle || "Download EPUB")}
+        ${options.emailSentTo
+          ? `EPUB sent to <strong>${escapeHtml(options.emailSentTo)}</strong>. `
+          : "Your EPUB is ready: "}
+        <a href="${escapeHtml(options.downloadUrl)}" download>
+          ${options.emailSentTo ? "Download directly" : escapeHtml(options.downloadTitle || "Download EPUB")}
         </a>
       </div>`
     : ""}`;
@@ -197,6 +220,7 @@ export function renderUI(options: UIOptions = {}): Response {
 interface SubscriptionsOptions {
   error?: string;
   success?: string;
+  emailEnabled?: boolean;
 }
 
 export function renderSubscriptionsUI(
@@ -205,7 +229,7 @@ export function renderSubscriptionsUI(
 ): Response {
   const subItems = subs.length === 0
     ? `<p class="empty">No subscriptions yet. Add a blog below to get started.</p>`
-    : `<ul class="sub-list">${subs.map(renderSubItem).join("")}</ul>`;
+    : `<ul class="sub-list">${subs.map((s) => renderSubItem(s, options.emailEnabled)).join("")}</ul>`;
 
   const body = `
   <h1>Blog Subscriptions</h1>
@@ -234,7 +258,7 @@ export function renderSubscriptionsUI(
   return page("Subscriptions – Blog to EPUB", nav("subscriptions"), body);
 }
 
-function renderSubItem(sub: Subscription): string {
+function renderSubItem(sub: Subscription, emailEnabled?: boolean): string {
   const lastChecked = sub.lastChecked
     ? `Last checked ${formatRelative(sub.lastChecked)}`
     : "Never checked";
@@ -246,7 +270,9 @@ function renderSubItem(sub: Subscription): string {
         .map(
           (a) =>
             `<li><a href="/download/article/${escapeHtml(a.id)}" download>${escapeHtml(a.title)}</a>` +
-            ` <span style="color:#999">(${formatDate(a.createdAt)})</span></li>`,
+            ` <span style="color:#999">(${formatDate(a.createdAt)})</span>` +
+            (emailEnabled ? ` <a class="email-link" href="/email/article/${escapeHtml(a.id)}">Email</a>` : "") +
+            `</li>`,
         )
         .join("")}</ul>`;
 
@@ -272,10 +298,10 @@ function renderSubItem(sub: Subscription): string {
 // Weekly books page
 // ---------------------------------------------------------------------------
 
-export function renderWeeklyBooksUI(books: WeeklyBookMeta[]): Response {
+export function renderWeeklyBooksUI(books: WeeklyBookMeta[], opts: { emailEnabled?: boolean } = {}): Response {
   const bookItems = books.length === 0
     ? `<p class="empty">No weekly books yet. Books are compiled every Monday from your subscription articles.</p>`
-    : `<ul class="book-list">${books.map(renderBookItem).join("")}</ul>`;
+    : `<ul class="book-list">${books.map((b) => renderBookItem(b, opts.emailEnabled)).join("")}</ul>`;
 
   const body = `
   <h1>Weekly Reading Books</h1>
@@ -285,15 +311,71 @@ export function renderWeeklyBooksUI(books: WeeklyBookMeta[]): Response {
   return page("Weekly Books – Blog to EPUB", nav("weekly-books"), body);
 }
 
-function renderBookItem(book: WeeklyBookMeta): string {
+function renderBookItem(book: WeeklyBookMeta, emailEnabled?: boolean): string {
   return `
   <li class="book-item">
     <div class="book-info">
       <p class="book-title">${escapeHtml(book.title)}</p>
       <p class="book-meta">${book.articleCount} article${book.articleCount !== 1 ? "s" : ""} &middot; ${Math.round(book.size / 1024)} KB &middot; ${formatDate(book.createdAt)}</p>
     </div>
-    <a class="book-download" href="/download/weekly/${escapeHtml(book.weekKey)}" download>Download</a>
+    <div class="book-actions">
+      <a class="book-download" href="/download/weekly/${escapeHtml(book.weekKey)}" download>Download</a>
+      ${emailEnabled ? `<a class="email-link" href="/email/weekly/${escapeHtml(book.weekKey)}">Send to email</a>` : ""}
+    </div>
   </li>`;
+}
+
+// ---------------------------------------------------------------------------
+// Email form page
+// ---------------------------------------------------------------------------
+
+interface EmailFormOptions {
+  epubType: string;
+  epubId: string;
+  title: string;
+  backUrl: string;
+  error?: string;
+  success?: string;
+  email?: string;
+}
+
+export function renderEmailFormUI(options: EmailFormOptions): Response {
+  const activeNav = options.backUrl.startsWith("/weekly")
+    ? "weekly-books"
+    : options.backUrl.startsWith("/sub")
+    ? "subscriptions"
+    : "convert";
+
+  const form = options.success
+    ? ""
+    : `<form method="POST" action="/send-epub">
+    <input type="hidden" name="epub_type" value="${escapeHtml(options.epubType)}" />
+    <input type="hidden" name="epub_id" value="${escapeHtml(options.epubId)}" />
+    <label for="email">Email address</label>
+    <input
+      type="email"
+      id="email"
+      name="email"
+      value="${escapeHtml(options.email || "")}"
+      placeholder="you@example.com"
+      required
+      autocomplete="email"
+    />
+    <br/>
+    <button type="submit">Send EPUB</button>
+  </form>`;
+
+  const body = `
+  <h1>Send EPUB by Email</h1>
+  <p class="subtitle">&ldquo;${escapeHtml(options.title)}&rdquo;</p>
+
+  ${options.error ? `<div class="error">${escapeHtml(options.error)}</div>` : ""}
+  ${options.success ? `<div class="success">${escapeHtml(options.success)}</div>` : ""}
+  ${form}
+
+  <p style="margin-top:1.5rem"><a href="${escapeHtml(options.backUrl)}">&larr; Back</a></p>`;
+
+  return page("Send EPUB – Blog to EPUB", nav(activeNav as Parameters<typeof nav>[0]), body);
 }
 
 // ---------------------------------------------------------------------------

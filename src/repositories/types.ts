@@ -1,5 +1,7 @@
 export interface Env {
   EPUB_CACHE: KVNamespace;
+  RESEND_API_KEY: string;
+  RESEND_FROM_ADDRESS: string;
 }
 
 // ---------------------------------------------------------------------------
