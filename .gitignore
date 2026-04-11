@@ -38,3 +38,5 @@ epubs*
 
 
 .wrangler*
+
+.*.vars
