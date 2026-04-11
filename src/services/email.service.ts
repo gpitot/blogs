@@ -1,3 +1,13 @@
+export function isEmailAllowed(email: string, allowlist: string | undefined): boolean {
+  if (!allowlist || !allowlist.trim()) return true;
+  const normalized = email.trim().toLowerCase();
+  return allowlist
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(normalized);
+}
+
 // Chunked base64 encoding — avoids stack overflow on large Uint8Arrays
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = "";

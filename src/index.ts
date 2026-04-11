@@ -12,7 +12,7 @@ import { detectFeedUrl, fetchAndParseFeed } from "./services/rss.ts";
 import { processArticleImages } from "./services/images.ts";
 import { urlToKey } from "./utils.ts";
 import { renderUI, renderSubscriptionsUI, renderWeeklyBooksUI, renderEmailFormUI } from "./ui.ts";
-import { sendEpubEmail } from "./services/email.service.ts";
+import { sendEpubEmail, isEmailAllowed } from "./services/email.service.ts";
 
 const FETCH_HEADERS = {
   "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)",
@@ -71,6 +71,12 @@ app.post("/convert", async (c) => {
     const rawEmail = body.get("email");
     if (rawEmail && typeof rawEmail === "string" && rawEmail.trim()) {
       emailAddress = rawEmail.trim();
+      if (!isEmailAllowed(emailAddress, c.env.EMAIL_ALLOWLIST)) {
+        return renderUI({
+          error: "That email address is not on the allow list.",
+          emailEnabled,
+        });
+      }
     }
   } catch {
     return renderUI({
@@ -389,6 +395,10 @@ app.post("/send-epub", async (c) => {
 
   if (!c.env.RESEND_API_KEY) {
     return makeFormPage({ error: "Email delivery is not configured." });
+  }
+
+  if (!isEmailAllowed(email, c.env.EMAIL_ALLOWLIST)) {
+    return makeFormPage({ error: "That email address is not on the allow list." });
   }
 
   const { conversion, posts } = createServices(c.env);
