@@ -1,0 +1,4 @@
+RESEND_API_KEY=your_resend_api_key_here
+# Comma-separated list of email addresses allowed to receive EPUBs.
+# Leave unset/empty to allow any address.
+EMAIL_ALLOWLIST=you@example.com,friend@example.com
