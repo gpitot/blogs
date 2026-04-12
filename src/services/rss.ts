@@ -29,7 +29,11 @@ function findChildren(node: HtmlNode, tagName: string): HtmlNode[] {
 }
 
 function textContent(node: HtmlNode): string {
-  if (node.type === "text" || node.type === "cdata") return node.data || "";
+  if (node.type === "text") return node.data || "";
+  if (node.type === "cdata") {
+    // htmlparser2 puts CDATA text in a child Text node, not in .data
+    return node.data || (node.children || []).map(textContent).join("");
+  }
   return (node.children || []).map(textContent).join("").trim();
 }
 
@@ -40,7 +44,10 @@ function childText(node: HtmlNode, tagName: string): string {
 
 function findDeep(nodes: HtmlNode[], tagName: string): HtmlNode | null {
   for (const node of nodes) {
-    if (node.type === "tag" && node.name?.toLowerCase() === tagName.toLowerCase()) {
+    if (
+      node.type === "tag" &&
+      node.name?.toLowerCase() === tagName.toLowerCase()
+    ) {
       return node;
     }
     if (node.children) {
@@ -65,10 +72,7 @@ function parseRss(doc: HtmlNode): ParsedFeed {
     const guid = childText(item, "guid") || link;
     const pubDateStr = childText(item, "pubdate");
     const pubDate = pubDateStr ? Date.parse(pubDateStr) : Date.now();
-    // Prefer content:encoded (full HTML), fall back to description
-    const contentEncoded = childText(item, "content:encoded");
-    const description = childText(item, "description");
-    const content = contentEncoded || description || "";
+    const content = childText(item, "content:encoded");
 
     if (link) {
       items.push({
@@ -111,7 +115,8 @@ function parseAtom(doc: HtmlNode): ParsedFeed {
     }
 
     const guid = childText(entry, "id") || link;
-    const dateStr = childText(entry, "updated") || childText(entry, "published");
+    const dateStr =
+      childText(entry, "updated") || childText(entry, "published");
     const pubDate = dateStr ? Date.parse(dateStr) : Date.now();
     // Atom content element (often has type="html") or summary as fallback
     const contentEl = childText(entry, "content");
@@ -189,14 +194,23 @@ export async function detectFeedUrl(blogUrl: string): Promise<string | null> {
       if (hrefMatch) {
         try {
           return new URL(hrefMatch[1], blogUrl).href;
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
 
   // Try common feed paths
   const { protocol, host } = new URL(blogUrl);
-  const commonPaths = ["/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml", "/feeds/posts/default"];
+  const commonPaths = [
+    "/feed",
+    "/rss",
+    "/feed.xml",
+    "/rss.xml",
+    "/atom.xml",
+    "/feeds/posts/default",
+  ];
 
   for (const path of commonPaths) {
     const feedUrl = `${protocol}//${host}${path}`;
@@ -212,7 +226,9 @@ export async function detectFeedUrl(blogUrl: string): Promise<string | null> {
           return feedUrl;
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   return null;

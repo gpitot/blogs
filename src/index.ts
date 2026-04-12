@@ -122,9 +122,10 @@ app.post("/convert", async (c) => {
   let html: string;
   try {
     const resp = await fetch(blogUrl, {
-      signal: AbortSignal.timeout(25000),
+      signal: AbortSignal.timeout(5000),
       headers: FETCH_HEADERS,
     });
+    console.log('Fetch response status:', resp);
     if (!resp.ok) {
       return renderUI({
         error: `Could not fetch that URL (HTTP ${resp.status}). Is it publicly accessible?`,
@@ -134,6 +135,7 @@ app.post("/convert", async (c) => {
     html = await resp.text();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.log('Fetch error:', err);
     return renderUI({ error: `Failed to fetch the URL: ${msg}`, emailEnabled });
   }
 
@@ -168,6 +170,7 @@ app.post("/convert", async (c) => {
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.log('Conversion error:', msg);
     return renderUI({ error: `Failed to convert article: ${msg}`, emailEnabled });
   }
 });
