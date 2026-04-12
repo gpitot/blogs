@@ -1,4 +1,4 @@
-import type { Subscription, WeeklyBookMeta } from "./repositories/types.ts";
+import type { Subscription, WeeklyBookMeta, CachedArticleMeta } from "./repositories/types.ts";
 
 // ---------------------------------------------------------------------------
 // Shared styles / layout helpers
@@ -168,6 +168,7 @@ interface UIOptions {
   downloadTitle?: string;
   emailSentTo?: string;
   emailEnabled?: boolean;
+  cachedArticles?: CachedArticleMeta[];
 }
 
 export function renderUI(options: UIOptions = {}): Response {
@@ -208,9 +209,29 @@ export function renderUI(options: UIOptions = {}): Response {
           ${options.emailSentTo ? "Download directly" : escapeHtml(options.downloadTitle || "Download EPUB")}
         </a>
       </div>`
+    : ""}
+
+  ${options.cachedArticles && options.cachedArticles.length > 0
+    ? `<h2>Recent Conversions</h2>
+       <ul class="book-list">${options.cachedArticles.map((a) => renderCachedArticleItem(a, options.emailEnabled)).join("")}</ul>`
     : ""}`;
 
   return page("Blog to EPUB", nav("convert"), body);
+}
+
+function renderCachedArticleItem(article: CachedArticleMeta, emailEnabled?: boolean): string {
+  const shortKey = article.cacheKey.replace("epub:", "");
+  return `
+  <li class="book-item">
+    <div class="book-info">
+      <p class="book-title">${escapeHtml(article.title)}</p>
+      <p class="book-meta">${Math.round(article.size / 1024)} KB &middot; ${formatDate(article.createdAt)}</p>
+    </div>
+    <div class="book-actions">
+      <a class="book-download" href="/download/${escapeHtml(shortKey)}" download>Download</a>
+      ${emailEnabled ? `<a class="email-link" href="/email/cached/${escapeHtml(shortKey)}">Send to email</a>` : ""}
+    </div>
+  </li>`;
 }
 
 // ---------------------------------------------------------------------------

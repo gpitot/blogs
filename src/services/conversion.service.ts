@@ -2,6 +2,7 @@ import type {
   EpubRepo,
   PendingArticle,
   CacheEntry,
+  CachedArticleMeta,
   WeeklyBookMeta,
 } from "../repositories/types.ts";
 import type { ImageProcessor } from "./interfaces.ts";
@@ -39,14 +40,22 @@ export class ConversionService {
 
     const kvKey = `epub-data:${cacheKey.replace("epub:", "")}`;
     await this.epubs.putEpubData(kvKey, epubBytes, EPUB_CACHE_TTL);
+    const title = article.title || "Article";
+    const createdAt = Date.now();
     await this.epubs.putCachedMeta(cacheKey, {
       kvKey,
-      title: article.title || "Article",
-      createdAt: Date.now(),
+      title,
+      createdAt,
+      size: epubBytes.byteLength,
+    });
+    await this.epubs.addCachedArticle({
+      cacheKey,
+      title,
+      createdAt,
       size: epubBytes.byteLength,
     });
 
-    return { cacheKey, epubBytes, title: article.title || "Article" };
+    return { cacheKey, epubBytes, title };
   }
 
   async convertArticleToEpub(article: PendingArticle): Promise<Uint8Array> {
@@ -158,6 +167,10 @@ export class ConversionService {
 
   async listWeeklyBooks(): Promise<WeeklyBookMeta[]> {
     return this.epubs.listWeeklyBooks();
+  }
+
+  async listCachedArticles(): Promise<CachedArticleMeta[]> {
+    return this.epubs.listCachedArticles();
   }
 
   private getISOWeekNumber(date: Date): number {

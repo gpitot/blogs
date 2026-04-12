@@ -4,6 +4,7 @@ import type {
   PendingArticle,
   CacheEntry,
   WeeklyBookMeta,
+  CachedArticleMeta,
   SubscriptionRepo,
   ArticleRepo,
   EpubRepo,
@@ -12,6 +13,8 @@ import type {
 const SUBS_INDEX_KEY = "subs:index";
 const WEEKLY_BOOKS_INDEX_KEY = "weekly-books-index";
 const MAX_WEEKLY_BOOKS = 8;
+const CACHED_ARTICLES_INDEX_KEY = "cached-articles-index";
+const MAX_CACHED_ARTICLES = 20;
 const PENDING_ARTICLE_TTL = 30 * 24 * 60 * 60; // 30 days
 const EPUB_CACHE_TTL = 604800; // 7 days
 const WEEKLY_BOOK_TTL = 60 * 24 * 60 * 60; // 60 days
@@ -160,5 +163,26 @@ export class KvEpubRepo implements EpubRepo {
     const buf = await this.kv.get(meta.kvKey, { type: "arrayBuffer" });
     if (!buf) return null;
     return { meta, buf };
+  }
+
+  async listCachedArticles(): Promise<CachedArticleMeta[]> {
+    const val = await this.kv.get(CACHED_ARTICLES_INDEX_KEY);
+    console.log("listCachedArticles", { val });
+    if (!val) return [];
+    try {
+      return JSON.parse(val) as CachedArticleMeta[];
+    } catch {
+      return [];
+    }
+  }
+
+  async addCachedArticle(meta: CachedArticleMeta): Promise<void> {
+    console.log('addCachedArticle', { meta });
+    const articles = await this.listCachedArticles();
+    console.log("Existing cached articles", { articles });
+    const updated = [meta, ...articles.filter((a) => a.cacheKey !== meta.cacheKey)]
+      .slice(0, MAX_CACHED_ARTICLES);
+    console.log("Updated cached articles list", { updated });
+    await this.kv.put(CACHED_ARTICLES_INDEX_KEY, JSON.stringify(updated));
   }
 }

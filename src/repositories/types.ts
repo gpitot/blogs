@@ -53,6 +53,13 @@ export interface WeeklyBookMeta {
   size: number;
 }
 
+export interface CachedArticleMeta {
+  cacheKey: string;
+  title: string;
+  createdAt: number;
+  size: number;
+}
+
 // ---------------------------------------------------------------------------
 // Repository interfaces
 // ---------------------------------------------------------------------------
@@ -79,6 +86,8 @@ export interface EpubRepo {
   getWeeklyBookData(
     weekKey: string,
   ): Promise<{ meta: WeeklyBookMeta; buf: ArrayBuffer } | null>;
+  listCachedArticles(): Promise<CachedArticleMeta[]>;
+  addCachedArticle(meta: CachedArticleMeta): Promise<void>;
 }
 
 export const MAX_SEEN_GUIDS = 200;

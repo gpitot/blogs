@@ -49,8 +49,10 @@ const app = new Hono<{ Bindings: Env }>();
 // Single-article conversion
 // ---------------------------------------------------------------------------
 
-app.get("/", (c) => {
-  return renderUI({ emailEnabled: !!c.env.RESEND_API_KEY });
+app.get("/", async (c) => {
+  const { conversion } = createServices(c.env);
+  const cachedArticles = await conversion.listCachedArticles();
+  return renderUI({ emailEnabled: !!c.env.RESEND_API_KEY, cachedArticles });
 });
 
 app.post("/convert", async (c) => {
@@ -369,6 +371,18 @@ app.get("/email/:type/:id", async (c) => {
     return renderEmailFormUI({ epubType: "article", epubId: id, title: article.title, backUrl: "/subscriptions" });
   }
 
+  if (type === "cached") {
+    if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
+    const cached = await conversion.getCachedConversion(`epub:${id}`);
+    if (!cached) {
+      return c.html(
+        `<html><body><p>EPUB not found or expired. <a href="/">Convert again</a></p></body></html>`,
+        404,
+      );
+    }
+    return renderEmailFormUI({ epubType: "cached", epubId: id, title: cached.title, backUrl: "/" });
+  }
+
   return c.notFound();
 });
 
@@ -387,7 +401,7 @@ app.post("/send-epub", async (c) => {
       epubType: type,
       epubId: id,
       title: "",
-      backUrl: type === "weekly" ? "/weekly-books" : "/subscriptions",
+      backUrl: type === "weekly" ? "/weekly-books" : type === "cached" ? "/" : "/subscriptions",
       email,
       ...opts,
     });
@@ -425,6 +439,15 @@ app.post("/send-epub", async (c) => {
       epubBytes = await conversion.convertArticleToEpub(article);
       title = article.title;
       filename = `${article.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article"}.epub`;
+    } else if (type === "cached") {
+      if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
+      const cached = await conversion.getCachedConversion(`epub:${id}`);
+      if (!cached) return makeFormPage({ error: "EPUB not found or expired." });
+      const buf = await conversion.getEpubData(cached.kvKey);
+      if (!buf) return makeFormPage({ error: "EPUB data not found or expired." });
+      epubBytes = new Uint8Array(buf);
+      title = cached.title;
+      filename = `${cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article"}.epub`;
     } else {
       return c.notFound();
     }
@@ -442,7 +465,7 @@ app.post("/send-epub", async (c) => {
       epubType: type,
       epubId: id,
       title,
-      backUrl: type === "weekly" ? "/weekly-books" : "/subscriptions",
+      backUrl: type === "weekly" ? "/weekly-books" : type === "cached" ? "/" : "/subscriptions",
       success: `EPUB sent to ${email}`,
     });
   } catch (err) {
