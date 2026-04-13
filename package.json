@@ -3,16 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "sam build",
-    "deploy": "sam build && sam deploy",
+    "build": "npm install --os=linux --cpu=arm64 sharp && sam build && node scripts/copy-sharp.js",
+    "deploy": "npm run build && sam deploy --profile personal-development",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3",
-    "@aws-sdk/lib-dynamodb": "^3",
     "@aws-sdk/client-s3": "^3",
+    "@aws-sdk/lib-dynamodb": "^3",
     "@mozilla/readability": "^0.6.0",
     "dom-serializer": "^3.0.0",
     "fflate": "^0.8.2",
@@ -20,11 +20,12 @@
     "htmlparser2": "^12.0.0",
     "linkedom": "^0.18.12",
     "sanitize-html": "^2.17.2",
-    "sharp": "^0.33.0"
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
     "@types/sanitize-html": "^2.16.1",
     "@types/sharp": "^0.31.0",
+    "esbuild": "0.27.7",
     "typescript": "^5.7.2",
     "vitest": "^4.1.2"
   }

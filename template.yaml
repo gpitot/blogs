@@ -27,6 +27,7 @@ Globals:
     MemorySize: 512
     Environment:
       Variables:
+        DEPLOY_VERSION: '2'
         DYNAMO_TABLE_NAME: !Ref BlogEpubTable
         S3_BUCKET_NAME: !Ref EpubBucket
         RESEND_API_KEY: !Ref ResendApiKey
@@ -67,13 +68,11 @@ Resources:
         Rules:
           - Id: ExpireSingleArticleEpubs
             Status: Enabled
-            Filter:
-              Prefix: epub/
+            Prefix: epub/
             ExpirationInDays: 7
           - Id: ExpireWeeklyEpubs
             Status: Enabled
-            Filter:
-              Prefix: weekly/
+            Prefix: weekly/
             ExpirationInDays: 60
 
   # ── HTTP API Lambda ────────────────────────────────────────────────────────
@@ -87,8 +86,6 @@ Resources:
         Sourcemap: false
         EntryPoints:
           - src/index.ts
-        # Keep AWS SDK and sharp as external — Lambda provides AWS SDK
-        # and sharp needs its native bindings installed for the target platform
         External:
           - '@aws-sdk/*'
           - sharp
@@ -104,7 +101,7 @@ Resources:
         AuthType: NONE
         Cors:
           AllowOrigins: ['*']
-          AllowMethods: ['GET', 'POST', 'OPTIONS']
+          AllowMethods: ['GET', 'POST']
           AllowHeaders: ['content-type']
 
   # ── Weekly cron Lambda ────────────────────────────────────────────────────
@@ -137,13 +134,6 @@ Resources:
             Description: 'Compile weekly reading EPUB every Monday at midnight UTC'
             RetryPolicy:
               MaximumRetryAttempts: 1
-
-  # ── sharp Lambda Layer (native bindings for arm64) ───────────────────────
-  # sharp must be compiled for the Lambda execution environment.
-  # Deploy using: npm install --platform=linux --arch=arm64 sharp
-  # and package into a layer, OR use the managed layer below.
-  # Alternatively: include sharp in the function package by NOT marking it external
-  # and setting: sam build --use-container (builds inside a Lambda-like Docker container)
 
 # ---------------------------------------------------------------------------
 # Outputs
