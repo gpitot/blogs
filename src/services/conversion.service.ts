@@ -10,6 +10,9 @@ import type { EpubImage } from "./images.ts";
 import { extractArticle } from "./clean.ts";
 import { generateEpub } from "./epub.ts";
 import { urlToKey } from "../utils.ts";
+import { createLogger } from "../logger.ts";
+
+const logger = createLogger("conversion-service");
 
 const EPUB_CACHE_TTL = 604800; // 7 days
 
@@ -24,6 +27,7 @@ export class ConversionService {
     html: string,
   ): Promise<{ cacheKey: string; epubBytes: Uint8Array; title: string }> {
     const cacheKey = await urlToKey(url);
+    logger.debug({ url, cacheKey }, "Converting single article");
 
     const article = extractArticle(html, url);
 
@@ -55,6 +59,7 @@ export class ConversionService {
       size: epubBytes.byteLength,
     });
 
+    logger.info({ title, size: epubBytes.byteLength }, "Article converted and cached");
     return { cacheKey, epubBytes, title };
   }
 
@@ -113,9 +118,9 @@ export class ConversionService {
           content: contentWithImages,
         });
       } catch (err) {
-        console.error(
-          `[conversion] Image processing failed for ${article.url}:`,
-          err,
+        logger.warn(
+          { err, url: article.url },
+          "Image processing failed for article, using raw content",
         );
         chapters.push({
           title: `${article.subTitle}: ${article.title}`,
@@ -144,8 +149,9 @@ export class ConversionService {
     };
 
     await this.epubs.addWeeklyBook(meta, epubBytes);
-    console.log(
-      `[conversion] Generated "${bookTitle}" with ${chapters.length} chapters (${Math.round(epubBytes.byteLength / 1024)} KB).`,
+    logger.info(
+      { title: bookTitle, chapters: chapters.length, sizeKb: Math.round(epubBytes.byteLength / 1024) },
+      "Weekly book compiled",
     );
 
     return meta;

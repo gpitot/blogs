@@ -1,4 +1,7 @@
 import { parseDocument } from "htmlparser2";
+import { createLogger } from "../logger.ts";
+
+const logger = createLogger("rss");
 
 export interface FeedItem {
   guid: string;
@@ -144,11 +147,13 @@ export function parseFeedXml(xml: string): ParsedFeed {
 }
 
 export async function fetchAndParseFeed(feedUrl: string): Promise<ParsedFeed> {
+  logger.debug({ feedUrl }, "Fetching RSS feed");
   const resp = await fetch(feedUrl, {
     signal: AbortSignal.timeout(20000),
     headers: { "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)" },
   });
   if (!resp.ok) {
+    logger.error({ feedUrl, status: resp.status }, "Failed to fetch feed");
     throw new Error(`Failed to fetch feed: HTTP ${resp.status}`);
   }
   const text = await resp.text();
