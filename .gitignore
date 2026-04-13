@@ -40,3 +40,4 @@ epubs*
 .wrangler*
 
 .*.vars
+.aws-sam/*
