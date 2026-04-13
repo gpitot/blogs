@@ -7,6 +7,9 @@ import {
   extractCanonicalUrl,
 } from "./clean.ts";
 import { generateId } from "../utils.ts";
+import { createLogger } from "../logger.ts";
+
+const logger = createLogger("posts-service");
 
 export class PostsService {
   constructor(
@@ -39,8 +42,9 @@ export class PostsService {
           : null;
 
         if (correctedUrl) {
-          console.log(
-            `[posts] Feed URL "${item.link}" has homepage canonical, retrying with "${correctedUrl}"`,
+          logger.debug(
+            { feedUrl: item.link, correctedUrl },
+            "Feed URL has homepage canonical, retrying",
           );
           const retryHtml = await this.fetcher.fetch(correctedUrl);
           if (retryHtml) {
@@ -52,8 +56,9 @@ export class PostsService {
         }
 
         if (article && !this.looksLikeArticle(article, item.title)) {
-          console.log(
-            `[posts] Readability extracted wrong content for "${item.title}" (got "${article.title}")`,
+          logger.debug(
+            { expected: item.title, extracted: article.title },
+            "Readability extracted wrong content, discarding",
           );
           article = null;
         }
@@ -69,9 +74,7 @@ export class PostsService {
     }
 
     if (!article || !article.content) {
-      console.log(
-        `[posts] No content available for "${item.title}", skipping`,
-      );
+      logger.warn({ title: item.title }, "No content available for article, skipping");
       return null;
     }
 
@@ -87,6 +90,7 @@ export class PostsService {
     };
 
     await this.articles.put(pending);
+    logger.info({ title: pending.title, url: pending.url, subTitle }, "Article fetched and saved");
     return pending;
   }
 

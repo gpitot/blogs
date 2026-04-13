@@ -28,6 +28,7 @@ Globals:
     Environment:
       Variables:
         DEPLOY_VERSION: '2'
+        LOG_LEVEL: 'info'
         DYNAMO_TABLE_NAME: !Ref BlogEpubTable
         S3_BUCKET_NAME: !Ref EpubBucket
         RESEND_API_KEY: !Ref ResendApiKey
