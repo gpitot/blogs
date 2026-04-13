@@ -1,4 +1,4 @@
-import { PhotonImage, grayscale, resize } from "@cf-wasm/photon/workerd";
+import sharp from "sharp";
 
 export interface EpubImage {
   filename: string;
@@ -99,27 +99,14 @@ async function downloadAndProcess(
   }
 
   try {
-    const photonImg = PhotonImage.new_from_byteslice(new Uint8Array(buffer));
-
-    // Resize if wider than MAX_WIDTH, preserving aspect ratio
-    const w = photonImg.get_width();
-    const h = photonImg.get_height();
-    let resized = photonImg;
-    if (w > MAX_WIDTH) {
-      const newH = Math.round((h / w) * MAX_WIDTH);
-      resized = resize(photonImg, MAX_WIDTH, newH, 1); // 1 = bilinear
-      photonImg.free();
-    }
-
-    // Convert to grayscale
-    grayscale(resized);
-
-    // Encode as JPEG
-    const jpegBytes = resized.get_bytes_jpeg(JPEG_QUALITY);
-    resized.free();
+    const jpegBuffer = await sharp(Buffer.from(buffer))
+      .resize(MAX_WIDTH, undefined, { withoutEnlargement: true })
+      .grayscale()
+      .jpeg({ quality: JPEG_QUALITY })
+      .toBuffer();
 
     const filename = `img${String(index + 1).padStart(3, "0")}.jpg`;
-    return { filename, data: jpegBytes, mediaType: "image/jpeg" };
+    return { filename, data: new Uint8Array(jpegBuffer), mediaType: "image/jpeg" };
   } catch {
     return null;
   }
