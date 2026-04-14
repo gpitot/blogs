@@ -570,7 +570,21 @@ app.post("/send-epub", async (c) => {
 // Admin / local-testing triggers
 // ---------------------------------------------------------------------------
 
+function checkAdminSecret(c: {
+  req: { header: (name: string) => string | undefined };
+  env: Env;
+}): Response | null {
+  const expected = c.env.ADMIN_SECRET;
+  if (!expected) return new Response("Admin disabled: ADMIN_SECRET not set.\n", { status: 503 });
+  const provided = c.req.header("x-admin-secret");
+  if (provided !== expected) return new Response("Unauthorized.\n", { status: 401 });
+  return null;
+}
+
 app.post("/admin/assemble-weekly/:weekKey?", async (c) => {
+  const unauth = checkAdminSecret(c);
+  if (unauth) return unauth;
+
   const paramWeekKey = c.req.param("weekKey");
   const weekKey =
     paramWeekKey ??
@@ -585,6 +599,14 @@ app.post("/admin/assemble-weekly/:weekKey?", async (c) => {
   const msg: AssembleEpubMsg = { kind: "weekly", weekKey };
   await c.env.Q_ASSEMBLE_EPUB.send(msg);
   return c.text(`Enqueued assemble-weekly for ${weekKey}\n`);
+});
+
+app.post("/admin/run-cron", async (c) => {
+  const unauth = checkAdminSecret(c);
+  if (unauth) return unauth;
+
+  c.executionCtx.waitUntil(runWeeklyJob(c.env));
+  return c.text("Cron job enqueued.\n");
 });
 
 // ---------------------------------------------------------------------------

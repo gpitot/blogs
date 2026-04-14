@@ -9,6 +9,7 @@ export interface Env {
   RESEND_API_KEY: string;
   RESEND_FROM_ADDRESS: string;
   EMAIL_ALLOWLIST?: string;
+  ADMIN_SECRET?: string;
 }
 
 // ---------------------------------------------------------------------------
