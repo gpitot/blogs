@@ -12,10 +12,19 @@ import { ConversionService } from "./services/conversion.service.ts";
 import { detectFeedUrl, fetchAndParseFeed } from "./services/rss.ts";
 import { processArticleImages } from "./services/images.ts";
 import { urlToKey, generateId } from "./utils.ts";
-import { renderUI, renderSubscriptionsUI, renderWeeklyBooksUI, renderEmailFormUI } from "./ui.ts";
+import {
+  renderUI,
+  renderSubscriptionsUI,
+  renderWeeklyBooksUI,
+  renderEmailFormUI,
+} from "./ui.ts";
 import { sendEpubEmail, isEmailAllowed } from "./services/email.service.ts";
 import { handleQueueBatch } from "./queue/handler.ts";
-import type { ParseArticleMsg, AssembleEpubMsg, CheckFeedMsg } from "./queue/types.ts";
+import type {
+  ParseArticleMsg,
+  AssembleEpubMsg,
+  CheckFeedMsg,
+} from "./queue/types.ts";
 
 const FETCH_HEADERS = {
   "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)",
@@ -70,7 +79,10 @@ app.post("/convert", async (c) => {
     }
     const parsed = new URL(raw.trim());
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return renderUI({ error: "Only http and https URLs are supported.", emailEnabled });
+      return renderUI({
+        error: "Only http and https URLs are supported.",
+        emailEnabled,
+      });
     }
     blogUrl = parsed.href;
     const rawEmail = body.get("email");
@@ -100,7 +112,8 @@ app.post("/convert", async (c) => {
       try {
         const buf = await conversion.getEpubData(cached.kvKey);
         if (buf) {
-          const safeTitle = cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
+          const safeTitle =
+            cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
           await sendEpubEmail({
             apiKey: c.env.RESEND_API_KEY,
             fromAddress: c.env.RESEND_FROM_ADDRESS,
@@ -119,7 +132,10 @@ app.post("/convert", async (c) => {
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        return renderUI({ error: `Failed to send email: ${msg}`, emailEnabled });
+        return renderUI({
+          error: `Failed to send email: ${msg}`,
+          emailEnabled,
+        });
       }
     }
     return c.redirect(`/download/${cacheKey.replace("epub:", "")}`, 303);
@@ -149,7 +165,10 @@ app.post("/convert", async (c) => {
     await c.env.Q_PARSE_ARTICLE.send(parseMsg);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return renderUI({ error: `Failed to queue conversion: ${msg}`, emailEnabled });
+    return renderUI({
+      error: `Failed to queue conversion: ${msg}`,
+      emailEnabled,
+    });
   }
 
   return c.redirect(`/status/${jobId}`, 303);
@@ -298,7 +317,10 @@ app.post("/subscriptions", async (c) => {
 
   if (!raw || typeof raw !== "string") {
     const subs = await blogs.listSubscriptions();
-    return renderSubscriptionsUI(subs, { error: "Please provide a URL.", emailEnabled });
+    return renderSubscriptionsUI(subs, {
+      error: "Please provide a URL.",
+      emailEnabled,
+    });
   }
 
   let siteUrl: string;
@@ -396,7 +418,12 @@ app.get("/email/:type/:id", async (c) => {
         404,
       );
     }
-    return renderEmailFormUI({ epubType: "weekly", epubId: id, title: book.title, backUrl: "/weekly-books" });
+    return renderEmailFormUI({
+      epubType: "weekly",
+      epubId: id,
+      title: book.title,
+      backUrl: "/weekly-books",
+    });
   }
 
   if (type === "article") {
@@ -408,7 +435,12 @@ app.get("/email/:type/:id", async (c) => {
         404,
       );
     }
-    return renderEmailFormUI({ epubType: "article", epubId: id, title: article.title, backUrl: "/subscriptions" });
+    return renderEmailFormUI({
+      epubType: "article",
+      epubId: id,
+      title: article.title,
+      backUrl: "/subscriptions",
+    });
   }
 
   if (type === "cached") {
@@ -420,7 +452,12 @@ app.get("/email/:type/:id", async (c) => {
         404,
       );
     }
-    return renderEmailFormUI({ epubType: "cached", epubId: id, title: cached.title, backUrl: "/" });
+    return renderEmailFormUI({
+      epubType: "cached",
+      epubId: id,
+      title: cached.title,
+      backUrl: "/",
+    });
   }
 
   return c.notFound();
@@ -441,7 +478,12 @@ app.post("/send-epub", async (c) => {
       epubType: type,
       epubId: id,
       title: "",
-      backUrl: type === "weekly" ? "/weekly-books" : type === "cached" ? "/" : "/subscriptions",
+      backUrl:
+        type === "weekly"
+          ? "/weekly-books"
+          : type === "cached"
+            ? "/"
+            : "/subscriptions",
       email,
       ...opts,
     });
@@ -455,7 +497,9 @@ app.post("/send-epub", async (c) => {
   }
 
   if (!isEmailAllowed(email, c.env.EMAIL_ALLOWLIST)) {
-    return makeFormPage({ error: "That email address is not on the allow list." });
+    return makeFormPage({
+      error: "That email address is not on the allow list.",
+    });
   }
 
   const { conversion, posts } = createServices(c.env);
@@ -468,14 +512,16 @@ app.post("/send-epub", async (c) => {
     if (type === "weekly") {
       if (!/^\d{4}-W\d{2}$/.test(id)) return c.notFound();
       const result = await conversion.getWeeklyBook(id);
-      if (!result) return makeFormPage({ error: "Weekly book not found or expired." });
+      if (!result)
+        return makeFormPage({ error: "Weekly book not found or expired." });
       epubBytes = new Uint8Array(result.buf);
       title = result.meta.title;
       filename = `${result.meta.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "weekly-reading"}.epub`;
     } else if (type === "article") {
       if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
       const article = await posts.getArticle(id);
-      if (!article) return makeFormPage({ error: "Article not found or expired." });
+      if (!article)
+        return makeFormPage({ error: "Article not found or expired." });
       epubBytes = await conversion.convertArticleToEpub(article);
       title = article.title;
       filename = `${article.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article"}.epub`;
@@ -484,7 +530,8 @@ app.post("/send-epub", async (c) => {
       const cached = await conversion.getCachedConversion(`epub:${id}`);
       if (!cached) return makeFormPage({ error: "EPUB not found or expired." });
       const buf = await conversion.getEpubData(cached.kvKey);
-      if (!buf) return makeFormPage({ error: "EPUB data not found or expired." });
+      if (!buf)
+        return makeFormPage({ error: "EPUB data not found or expired." });
       epubBytes = new Uint8Array(buf);
       title = cached.title;
       filename = `${cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article"}.epub`;
@@ -505,13 +552,39 @@ app.post("/send-epub", async (c) => {
       epubType: type,
       epubId: id,
       title,
-      backUrl: type === "weekly" ? "/weekly-books" : type === "cached" ? "/" : "/subscriptions",
+      backUrl:
+        type === "weekly"
+          ? "/weekly-books"
+          : type === "cached"
+            ? "/"
+            : "/subscriptions",
       success: `EPUB sent to ${email}`,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return makeFormPage({ error: `Failed to send email: ${msg}` });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Admin / local-testing triggers
+// ---------------------------------------------------------------------------
+
+app.post("/admin/assemble-weekly/:weekKey?", async (c) => {
+  const paramWeekKey = c.req.param("weekKey");
+  const weekKey =
+    paramWeekKey ??
+    (() => {
+      const now = new Date();
+      const w = getISOWeekNumber(now).toString().padStart(2, "0");
+      return `${now.getUTCFullYear()}-W${w}`;
+    })();
+  if (!/^\d{4}-W\d{2}$/.test(weekKey)) {
+    return c.text("Invalid weekKey. Expected YYYY-Www.", 400);
+  }
+  const msg: AssembleEpubMsg = { kind: "weekly", weekKey };
+  await c.env.Q_ASSEMBLE_EPUB.send(msg);
+  return c.text(`Enqueued assemble-weekly for ${weekKey}\n`);
 });
 
 // ---------------------------------------------------------------------------
@@ -544,18 +617,22 @@ async function runWeeklyJob(env: Env): Promise<void> {
   }
 
   const assembleMsg: AssembleEpubMsg = { kind: "weekly", weekKey };
-  const SIX_HOURS = 6 * 60 * 60;
+  const DELAY_TIME = 60 * 60;
   try {
-    await env.Q_ASSEMBLE_EPUB.send(assembleMsg, { delaySeconds: SIX_HOURS });
+    await env.Q_ASSEMBLE_EPUB.send(assembleMsg, { delaySeconds: DELAY_TIME });
   } catch (err) {
     console.error(`[weekly] Failed to enqueue assemble-weekly:`, err);
   }
 
-  console.log(`[weekly] enqueued ${ids.length} check-feed + assemble-weekly for ${weekKey}.`);
+  console.log(
+    `[weekly] enqueued ${ids.length} check-feed + assemble-weekly for ${weekKey}.`,
+  );
 }
 
 function getISOWeekNumber(date: Date): number {
-  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const d = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
