@@ -11,3 +11,42 @@ id = "c926024d85b04cd5a4e3238e6a644f8f"
 # Compile weekly book from subscription articles every Monday at midnight UTC
 crons = ["0 0 * * 1"]
 
+# ---------------------------------------------------------------------------
+# Queues — split CPU-heavy work into per-job invocations (10ms CPU free-tier)
+# ---------------------------------------------------------------------------
+
+[[queues.producers]]
+binding = "Q_PARSE_ARTICLE"
+queue = "blog-dl-parse-article"
+
+[[queues.producers]]
+binding = "Q_PROCESS_IMAGE"
+queue = "blog-dl-process-image"
+
+[[queues.producers]]
+binding = "Q_ASSEMBLE_EPUB"
+queue = "blog-dl-assemble-epub"
+
+[[queues.producers]]
+binding = "Q_CHECK_FEED"
+queue = "blog-dl-check-feed"
+
+[[queues.consumers]]
+queue = "blog-dl-parse-article"
+max_batch_size = 1
+max_retries = 3
+
+[[queues.consumers]]
+queue = "blog-dl-process-image"
+max_batch_size = 1
+max_retries = 3
+
+[[queues.consumers]]
+queue = "blog-dl-assemble-epub"
+max_batch_size = 1
+max_retries = 3
+
+[[queues.consumers]]
+queue = "blog-dl-check-feed"
+max_batch_size = 1
+max_retries = 3

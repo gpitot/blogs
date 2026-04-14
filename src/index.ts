@@ -1,18 +1,21 @@
 import { Hono } from "hono";
-import type { Env } from "./repositories/types.ts";
+import type { Env, JobMeta } from "./repositories/types.ts";
 import {
   KvSubscriptionRepo,
   KvArticleRepo,
   KvEpubRepo,
+  KvJobRepo,
 } from "./repositories/kv.ts";
 import { BlogsService } from "./services/blogs.service.ts";
 import { PostsService } from "./services/posts.service.ts";
 import { ConversionService } from "./services/conversion.service.ts";
 import { detectFeedUrl, fetchAndParseFeed } from "./services/rss.ts";
 import { processArticleImages } from "./services/images.ts";
-import { urlToKey } from "./utils.ts";
+import { urlToKey, generateId } from "./utils.ts";
 import { renderUI, renderSubscriptionsUI, renderWeeklyBooksUI, renderEmailFormUI } from "./ui.ts";
 import { sendEpubEmail, isEmailAllowed } from "./services/email.service.ts";
+import { handleQueueBatch } from "./queue/handler.ts";
+import type { ParseArticleMsg, AssembleEpubMsg, CheckFeedMsg } from "./queue/types.ts";
 
 const FETCH_HEADERS = {
   "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)",
@@ -89,6 +92,7 @@ app.post("/convert", async (c) => {
 
   const { conversion } = createServices(c.env);
 
+  // Fast path: already cached — deliver immediately
   const cacheKey = await urlToKey(blogUrl);
   const cached = await conversion.getCachedConversion(cacheKey);
   if (cached) {
@@ -121,61 +125,97 @@ app.post("/convert", async (c) => {
     return c.redirect(`/download/${cacheKey.replace("epub:", "")}`, 303);
   }
 
-  let html: string;
+  // Queue the work so CPU-heavy steps each get their own 10ms budget
+  const jobId = generateId();
+  const now = Date.now();
+  const jobs = new KvJobRepo(c.env.EPUB_CACHE);
+  const job: JobMeta = {
+    jobId,
+    url: blogUrl,
+    status: "queued",
+    emailTo: emailAddress,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await jobs.putJob(job);
+
+  const parseMsg: ParseArticleMsg = {
+    jobId,
+    url: blogUrl,
+    mode: "single",
+    emailTo: emailAddress,
+  };
   try {
-    const resp = await fetch(blogUrl, {
-      signal: AbortSignal.timeout(5000),
-      headers: FETCH_HEADERS,
-    });
-    console.log('Fetch response status:', resp);
-    if (!resp.ok) {
-      return renderUI({
-        error: `Could not fetch that URL (HTTP ${resp.status}). Is it publicly accessible?`,
-        emailEnabled,
-      });
-    }
-    html = await resp.text();
+    await c.env.Q_PARSE_ARTICLE.send(parseMsg);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.log('Fetch error:', err);
-    return renderUI({ error: `Failed to fetch the URL: ${msg}`, emailEnabled });
+    return renderUI({ error: `Failed to queue conversion: ${msg}`, emailEnabled });
   }
 
-  try {
-    const result = await conversion.convertSingleArticle(blogUrl, html);
-    if (emailAddress && c.env.RESEND_API_KEY) {
-      try {
-        const safeTitle = result.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
-        await sendEpubEmail({
-          apiKey: c.env.RESEND_API_KEY,
-          fromAddress: c.env.RESEND_FROM_ADDRESS,
-          to: emailAddress,
-          title: result.title,
-          filename: `${safeTitle}.epub`,
-          epubBytes: result.epubBytes,
-        });
-        const shortKey = result.cacheKey.replace("epub:", "");
-        return renderUI({
-          emailEnabled,
-          emailSentTo: emailAddress,
-          downloadUrl: `/download/${shortKey}`,
-          downloadTitle: result.title,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return renderUI({ error: `Failed to send email: ${msg}`, emailEnabled });
-      }
-    }
-    return c.redirect(
-      `/download/${result.cacheKey.replace("epub:", "")}`,
-      303,
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.log('Conversion error:', msg);
-    return renderUI({ error: `Failed to convert article: ${msg}`, emailEnabled });
-  }
+  return c.redirect(`/status/${jobId}`, 303);
 });
+
+// ---------------------------------------------------------------------------
+// Job status polling
+// ---------------------------------------------------------------------------
+
+app.get("/status/:jobId", async (c) => {
+  const jobId = c.req.param("jobId");
+  if (!/^[a-f0-9]+$/.test(jobId)) return c.notFound();
+
+  const jobs = new KvJobRepo(c.env.EPUB_CACHE);
+  const job = await jobs.getJob(jobId);
+  if (!job) {
+    return c.html(
+      `<html><body><p>Job not found or expired. <a href="/">Convert again</a></p></body></html>`,
+      404,
+    );
+  }
+
+  if (job.status === "done" && job.cacheKey) {
+    return c.redirect(`/download/${job.cacheKey.replace("epub:", "")}`, 303);
+  }
+
+  if (job.status === "error") {
+    return c.html(
+      `<html><body><h2>Conversion failed</h2><p>${escapeHtml(job.error ?? "Unknown error")}</p><p><a href="/">Try again</a></p></body></html>`,
+      500,
+    );
+  }
+
+  const label: Record<JobMeta["status"], string> = {
+    queued: "Queued…",
+    parsing: "Fetching & extracting article…",
+    "processing-images": "Processing images…",
+    assembling: "Assembling EPUB…",
+    done: "Done",
+    error: "Error",
+  };
+
+  return c.html(
+    `<html>
+      <head>
+        <meta http-equiv="refresh" content="3;url=/status/${jobId}" />
+        <title>Converting…</title>
+        <style>body{font-family:system-ui,sans-serif;max-width:640px;margin:5rem auto;padding:0 1.25rem;color:#1a1a1a;background:#fafafa}</style>
+      </head>
+      <body>
+        <h1>Converting…</h1>
+        <p>${escapeHtml(label[job.status])}</p>
+        <p><small>${escapeHtml(job.url)}</small></p>
+        <p><small>This page refreshes every 3 seconds.</small></p>
+      </body>
+    </html>`,
+  );
+});
+
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
 
 app.get("/download/:key", async (c) => {
   const key = c.req.param("key");
@@ -478,58 +518,56 @@ app.post("/send-epub", async (c) => {
 // Scheduled handler
 // ---------------------------------------------------------------------------
 
+/**
+ * Weekly cron fans work out onto queues:
+ *   - enqueue one check-feed per subscription (each consumer invocation parses
+ *     the RSS and enqueues parse-article jobs for new items)
+ *   - enqueue a single delayed assemble-epub (kind: "weekly") for +6h, by which
+ *     time per-article jobs should have run and their images downloaded
+ */
 async function runWeeklyJob(env: Env): Promise<void> {
-  console.log("[weekly] Checking subscriptions and compiling book...");
-  const { blogs, posts, conversion } = createServices(env);
-  const subs = await blogs.listSubscriptions();
+  console.log("[weekly] Enqueuing subscription checks...");
+  const subs = new KvSubscriptionRepo(env.EPUB_CACHE);
+  const ids = (await subs.list()).map((s) => s.id);
 
-  const allArticles: import("./repositories/types.ts").PendingArticle[] = [];
+  const now = new Date();
+  const weekNum = getISOWeekNumber(now).toString().padStart(2, "0");
+  const weekKey = `${now.getUTCFullYear()}-W${weekNum}`;
 
-  for (const sub of subs) {
+  for (const id of ids) {
+    const msg: CheckFeedMsg = { subId: id, weekKey };
     try {
-      const newItems = await blogs.checkForNewPosts(sub);
-      const saved: import("./repositories/types.ts").PendingArticle[] = [];
-
-      for (const item of newItems) {
-        try {
-          const article = await posts.fetchAndSave(item, sub.id, sub.title);
-          if (article) {
-            saved.push(article);
-            allArticles.push(article);
-          }
-        } catch (err) {
-          console.error(`[weekly] Failed to save ${item.link}:`, err);
-        }
-      }
-
-      if (saved.length > 0) {
-        await blogs.updateRecentArticles(sub, saved);
-      }
-
-      console.log(
-        `[weekly] "${sub.title}": ${saved.length} new articles saved.`,
-      );
+      await env.Q_CHECK_FEED.send(msg);
     } catch (err) {
-      console.error(`[weekly] Error checking "${sub.title}":`, err);
+      console.error(`[weekly] Failed to enqueue check-feed for ${id}:`, err);
     }
   }
 
-  if (allArticles.length === 0) {
-    console.log(
-      "[weekly] No new articles this week, skipping book generation.",
-    );
-    return;
+  const assembleMsg: AssembleEpubMsg = { kind: "weekly", weekKey };
+  const SIX_HOURS = 6 * 60 * 60;
+  try {
+    await env.Q_ASSEMBLE_EPUB.send(assembleMsg, { delaySeconds: SIX_HOURS });
+  } catch (err) {
+    console.error(`[weekly] Failed to enqueue assemble-weekly:`, err);
   }
 
-  console.log(
-    `[weekly] Compiling ${allArticles.length} articles into book...`,
-  );
-  await conversion.compileWeeklyBook(allArticles);
+  console.log(`[weekly] enqueued ${ids.length} check-feed + assemble-weekly for ${weekKey}.`);
+}
+
+function getISOWeekNumber(date: Date): number {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 }
 
 export default {
   fetch: app.fetch.bind(app),
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(runWeeklyJob(env));
+  },
+  async queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+    await handleQueueBatch(batch as MessageBatch<never>, env);
   },
 };

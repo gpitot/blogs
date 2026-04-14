@@ -13,59 +13,74 @@ const MAX_IMAGES = 50;
 const DOWNLOAD_TIMEOUT = 10_000; // 10s per image
 
 /**
- * Download all images in the HTML, convert raster images to grayscale low-res JPEG,
- * include SVGs as-is, and rewrite src attributes to local EPUB paths.
+ * Placeholder inserted into article HTML for image `idx`. The assemble step
+ * replaces these with `img/{actual filename}` once each image has been
+ * downloaded and processed in its own queue invocation.
  */
-export async function processArticleImages(
+export function imagePlaceholder(idx: number): string {
+  return `__BLOGDL_IMG_${idx}__`;
+}
+
+/**
+ * Walk the article HTML, collect absolute image URLs, and rewrite each `<img src>`
+ * to a placeholder keyed by index. Pure CPU, but cheap (regex scan).
+ *
+ * Returns the rewritten HTML and the list of absolute URLs in insertion order.
+ */
+export function extractImageUrls(
   html: string,
   baseUrl: string,
-  startIndex = 0,
-): Promise<{ html: string; images: EpubImage[] }> {
-  // Extract all img src URLs
+): { html: string; urls: string[] } {
   const imgRegex = /<img\s[^>]*?src="([^"]+)"/g;
-  const urls: { original: string; absolute: string }[] = [];
+  const urls: string[] = [];
+  const originals: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = imgRegex.exec(html)) !== null) {
     if (urls.length >= MAX_IMAGES) break;
     const src = match[1]!;
     try {
-      const absolute = src.startsWith("http")
-        ? src
-        : new URL(src, baseUrl).href;
-      urls.push({ original: src, absolute });
+      const absolute = src.startsWith("http") ? src : new URL(src, baseUrl).href;
+      urls.push(absolute);
+      originals.push(src);
     } catch {
-      // invalid URL, skip
+      // invalid URL, skip — leave in-place
     }
   }
 
-  if (urls.length === 0) return { html, images: [] };
-
-  // Download and process all images concurrently
-  const results = await Promise.allSettled(
-    urls.map((u, i) => downloadAndProcess(u.absolute, startIndex + i)),
-  );
-
-  const images: EpubImage[] = [];
-  let processed = html;
-
-  for (let i = 0; i < urls.length; i++) {
-    const result = results[i]!;
-    if (result.status !== "fulfilled" || !result.value) continue;
-
-    const image = result.value;
-    images.push(image);
-    // Replace the src URL with the local EPUB path
-    processed = processed
-      .split(urls[i]!.original)
-      .join(`img/${image.filename}`);
+  let rewritten = html;
+  for (let i = 0; i < originals.length; i++) {
+    rewritten = rewritten.split(originals[i]!).join(imagePlaceholder(i));
   }
-
-  return { html: processed, images };
+  return { html: rewritten, urls };
 }
 
-async function downloadAndProcess(
+/**
+ * Replace `__BLOGDL_IMG_{idx}__` placeholders with `img/{filename}` for each
+ * image present in `filenamesByIdx`. Missing indices are replaced with empty
+ * string (the `<img>` will render with no src — acceptable fallback).
+ */
+export function inlineImageFilenames(
+  html: string,
+  filenamesByIdx: Record<number, string>,
+): string {
+  return html.replace(/__BLOGDL_IMG_(\d+)__/g, (_m, idxStr) => {
+    const idx = parseInt(idxStr, 10);
+    const name = filenamesByIdx[idx];
+    return name ? `img/${name}` : "";
+  });
+}
+
+/**
+ * Download + process a single image. Runs inside one queue invocation so it
+ * gets its own CPU budget.
+ *
+ * Returns null for any failure (invalid URL, too large, non-image content-type,
+ * photon failure). The caller should simply skip this index — the placeholder
+ * will render with no src.
+ */
+export async function processSingleImage(
   url: string,
-  index: number,
+  idx: number,
 ): Promise<EpubImage | null> {
   let resp: Response;
   try {
@@ -88,20 +103,13 @@ async function downloadAndProcess(
   const buffer = await resp.arrayBuffer();
   if (buffer.byteLength > MAX_DOWNLOAD_SIZE) return null;
 
-  // SVGs: include as-is without raster processing
   if (contentType.includes("svg")) {
-    const filename = `img${String(index + 1).padStart(3, "0")}.svg`;
-    return {
-      filename,
-      data: new Uint8Array(buffer),
-      mediaType: "image/svg+xml",
-    };
+    const filename = `img${String(idx + 1).padStart(3, "0")}.svg`;
+    return { filename, data: new Uint8Array(buffer), mediaType: "image/svg+xml" };
   }
 
   try {
     const photonImg = PhotonImage.new_from_byteslice(new Uint8Array(buffer));
-
-    // Resize if wider than MAX_WIDTH, preserving aspect ratio
     const w = photonImg.get_width();
     const h = photonImg.get_height();
     let resized = photonImg;
@@ -110,17 +118,40 @@ async function downloadAndProcess(
       resized = resize(photonImg, MAX_WIDTH, newH, 1); // 1 = bilinear
       photonImg.free();
     }
-
-    // Convert to grayscale
     grayscale(resized);
-
-    // Encode as JPEG
     const jpegBytes = resized.get_bytes_jpeg(JPEG_QUALITY);
     resized.free();
-
-    const filename = `img${String(index + 1).padStart(3, "0")}.jpg`;
+    const filename = `img${String(idx + 1).padStart(3, "0")}.jpg`;
     return { filename, data: jpegBytes, mediaType: "image/jpeg" };
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy synchronous helper — kept so on-demand download routes
+// (/download/article/:id and /send-epub) still work without queuing.
+// ---------------------------------------------------------------------------
+
+export async function processArticleImages(
+  html: string,
+  baseUrl: string,
+  startIndex = 0,
+): Promise<{ html: string; images: EpubImage[] }> {
+  const { html: rewritten, urls } = extractImageUrls(html, baseUrl);
+  if (urls.length === 0) return { html: rewritten, images: [] };
+
+  const results = await Promise.allSettled(
+    urls.map((u, i) => processSingleImage(u, startIndex + i)),
+  );
+
+  const images: EpubImage[] = [];
+  const byIdx: Record<number, string> = {};
+  for (let i = 0; i < urls.length; i++) {
+    const r = results[i]!;
+    if (r.status !== "fulfilled" || !r.value) continue;
+    images.push(r.value);
+    byIdx[i] = r.value.filename;
+  }
+  return { html: inlineImageFilenames(rewritten, byIdx), images };
 }

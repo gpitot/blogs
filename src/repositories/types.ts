@@ -1,8 +1,55 @@
+import type { ParseArticleMsg, ProcessImageMsg, AssembleEpubMsg, CheckFeedMsg } from "../queue/types.ts";
+
 export interface Env {
   EPUB_CACHE: KVNamespace;
+  Q_PARSE_ARTICLE: Queue<ParseArticleMsg>;
+  Q_PROCESS_IMAGE: Queue<ProcessImageMsg>;
+  Q_ASSEMBLE_EPUB: Queue<AssembleEpubMsg>;
+  Q_CHECK_FEED: Queue<CheckFeedMsg>;
   RESEND_API_KEY: string;
   RESEND_FROM_ADDRESS: string;
   EMAIL_ALLOWLIST?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Job / pipeline types
+// ---------------------------------------------------------------------------
+
+export type JobStatus = "queued" | "parsing" | "processing-images" | "assembling" | "done" | "error";
+
+export interface JobMeta {
+  jobId: string;
+  url: string;
+  status: JobStatus;
+  error?: string;
+  cacheKey?: string;
+  title?: string;
+  emailTo?: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ArticleMeta {
+  jobId: string;
+  url: string;
+  title: string;
+  byline: string;
+  content: string; // XHTML with image src replaced to img/imgNNN.*
+  imageUrls: string[]; // absolute URLs in order
+  expectedImages: number;
+  createdAt: number;
+  // Optional: when produced via weekly flow, the week bucket
+  weekKey?: string;
+  subId?: string;
+  subTitle?: string;
+  // Bounded retry for assemble
+  assembleAttempts?: number;
+}
+
+export interface StoredImage {
+  filename: string;
+  mediaType: "image/jpeg" | "image/svg+xml";
+  size: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +121,19 @@ export interface SubscriptionRepo {
 export interface ArticleRepo {
   get(id: string): Promise<PendingArticle | null>;
   put(article: PendingArticle): Promise<void>;
+}
+
+export interface JobRepo {
+  getJob(jobId: string): Promise<JobMeta | null>;
+  putJob(job: JobMeta): Promise<void>;
+  getArticleMeta(jobId: string): Promise<ArticleMeta | null>;
+  putArticleMeta(meta: ArticleMeta): Promise<void>;
+  putImage(jobId: string, idx: number, filename: string, mediaType: StoredImage["mediaType"], data: Uint8Array): Promise<void>;
+  getImage(jobId: string, idx: number): Promise<{ filename: string; mediaType: StoredImage["mediaType"]; data: ArrayBuffer } | null>;
+  listImageIndices(jobId: string): Promise<number[]>;
+  // Weekly helpers
+  addWeeklyJob(weekKey: string, jobId: string): Promise<void>;
+  listWeeklyJobs(weekKey: string): Promise<string[]>;
 }
 
 export interface EpubRepo {
