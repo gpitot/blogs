@@ -1,8 +1,5 @@
 import type { AwsEnv, PendingArticle } from "./repositories/types.ts";
 import { createServices } from "./index.ts";
-import { createLogger } from "./logger.ts";
-
-const logger = createLogger("weekly");
 
 // ---------------------------------------------------------------------------
 // Environment — read once at Lambda cold start
@@ -21,9 +18,9 @@ const env: AwsEnv = {
 // ---------------------------------------------------------------------------
 
 async function runWeeklyJob(): Promise<void> {
+  console.log("[weekly] Checking subscriptions and compiling book...");
   const { blogs, posts, conversion } = createServices(env);
   const subs = await blogs.listSubscriptions();
-  logger.info({ subCount: subs.length }, "Checking subscriptions and compiling book");
 
   const allArticles: PendingArticle[] = [];
 
@@ -40,7 +37,7 @@ async function runWeeklyJob(): Promise<void> {
             allArticles.push(article);
           }
         } catch (err) {
-          logger.warn({ err, link: item.link }, "Failed to save article");
+          console.error(`[weekly] Failed to save ${item.link}:`, err);
         }
       }
 
@@ -48,18 +45,18 @@ async function runWeeklyJob(): Promise<void> {
         await blogs.updateRecentArticles(sub, saved);
       }
 
-      logger.info({ sub: sub.title, saved: saved.length }, "Subscription checked");
+      console.log(`[weekly] "${sub.title}": ${saved.length} new articles saved.`);
     } catch (err) {
-      logger.error({ err, sub: sub.title }, "Error checking subscription");
+      console.error(`[weekly] Error checking "${sub.title}":`, err);
     }
   }
 
   if (allArticles.length === 0) {
-    logger.info("No new articles this week, skipping book generation");
+    console.log("[weekly] No new articles this week, skipping book generation.");
     return;
   }
 
-  logger.info({ articleCount: allArticles.length }, "Compiling weekly book");
+  console.log(`[weekly] Compiling ${allArticles.length} articles into book...`);
   await conversion.compileWeeklyBook(allArticles);
 }
 

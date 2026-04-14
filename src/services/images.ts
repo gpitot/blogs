@@ -1,7 +1,4 @@
 import sharp from "sharp";
-import { createLogger } from "../logger.ts";
-
-const logger = createLogger("images");
 
 export interface EpubImage {
   filename: string;
@@ -43,8 +40,6 @@ export async function processArticleImages(
 
   if (urls.length === 0) return { html, images: [] };
 
-  logger.debug({ baseUrl, imageCount: urls.length }, "Processing article images");
-
   // Download and process all images concurrently
   const results = await Promise.allSettled(
     urls.map((u, i) => downloadAndProcess(u.absolute, startIndex + i)),
@@ -65,7 +60,6 @@ export async function processArticleImages(
       .join(`img/${image.filename}`);
   }
 
-  logger.debug({ baseUrl, processed: images.length, total: urls.length }, "Image processing complete");
   return { html: processed, images };
 }
 

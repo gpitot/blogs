@@ -6,9 +6,6 @@ import { MAX_SEEN_GUIDS, MAX_RECENT_ARTICLES } from "../repositories/types.ts";
 import type { FeedClient } from "./interfaces.ts";
 import type { FeedItem } from "./rss.ts";
 import { generateId } from "../utils.ts";
-import { createLogger } from "../logger.ts";
-
-const logger = createLogger("blogs-service");
 
 export class BlogsService {
   constructor(
@@ -19,10 +16,8 @@ export class BlogsService {
   async subscribe(
     url: string,
   ): Promise<{ subscription: Subscription } | { error: string }> {
-    logger.info({ url }, "Detecting feed URL");
     const feedUrl = await this.feed.detectFeedUrl(url);
     if (!feedUrl) {
-      logger.warn({ url }, "No feed found for URL");
       return {
         error:
           "Could not find an RSS or Atom feed for that URL. Please provide the feed URL directly.",
@@ -33,7 +28,6 @@ export class BlogsService {
     try {
       feed = await this.feed.fetchAndParseFeed(feedUrl);
     } catch (err) {
-      logger.error({ err, feedUrl }, "Failed to fetch feed");
       return {
         error: `Failed to read feed: ${err instanceof Error ? err.message : String(err)}`,
       };
@@ -55,12 +49,10 @@ export class BlogsService {
     };
 
     await this.subs.put(sub);
-    logger.info({ title: sub.title, feedUrl }, "Subscribed to feed");
     return { subscription: sub };
   }
 
   async unsubscribe(id: string): Promise<void> {
-    logger.info({ id }, "Unsubscribed");
     await this.subs.delete(id);
   }
 
@@ -85,7 +77,6 @@ export class BlogsService {
       seenGuids: [...newGuids, ...sub.seenGuids].slice(0, MAX_SEEN_GUIDS),
     });
 
-    logger.debug({ sub: sub.title, newItems: newItems.length }, "Checked feed for new posts");
     return newItems;
   }
 

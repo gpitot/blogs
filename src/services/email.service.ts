@@ -1,7 +1,3 @@
-import { createLogger } from "../logger.ts";
-
-const logger = createLogger("email-service");
-
 export function isEmailAllowed(email: string, allowlist: string | undefined): boolean {
   if (!allowlist || !allowlist.trim()) return true;
   const normalized = email.trim().toLowerCase();
@@ -32,7 +28,6 @@ export async function sendEpubEmail(opts: {
 }): Promise<void> {
   const { apiKey, fromAddress, to, title, filename, epubBytes } = opts;
 
-  logger.info({ title, filename }, "Sending EPUB email");
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -55,7 +50,6 @@ export async function sendEpubEmail(opts: {
 
   if (!resp.ok) {
     const body = await resp.text().catch(() => "(no body)");
-    logger.error({ status: resp.status, body }, "Resend API error");
     throw new Error(`Resend API error (${resp.status}): ${body}`);
   }
 }

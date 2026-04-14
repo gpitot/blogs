@@ -14,9 +14,6 @@ import { processArticleImages } from "./services/images.ts";
 import { urlToKey } from "./utils.ts";
 import { renderUI, renderSubscriptionsUI, renderWeeklyBooksUI, renderEmailFormUI } from "./ui.ts";
 import { sendEpubEmail, isEmailAllowed } from "./services/email.service.ts";
-import { createLogger } from "./logger.ts";
-
-const logger = createLogger("api");
 
 // ---------------------------------------------------------------------------
 // Environment — read once at Lambda cold start
@@ -104,12 +101,9 @@ app.post("/convert", async (c) => {
 
   const { conversion } = createServices(env);
 
-  logger.info({ url: blogUrl, hasEmail: !!emailAddress }, "Converting article");
-
   const cacheKey = await urlToKey(blogUrl);
   const cached = await conversion.getCachedConversion(cacheKey);
   if (cached) {
-    logger.debug({ cacheKey, title: cached.title }, "Returning cached conversion");
     if (emailAddress && env.RESEND_API_KEY) {
       try {
         const buf = await conversion.getEpubData(cached.kvKey);
@@ -132,7 +126,6 @@ app.post("/convert", async (c) => {
           downloadTitle: cached.title,
         });
       } catch (err) {
-        logger.error({ err, url: blogUrl }, "Failed to send email for cached conversion");
         const msg = err instanceof Error ? err.message : String(err);
         return renderUI({ error: `Failed to send email: ${msg}`, emailEnabled });
       }
@@ -147,7 +140,6 @@ app.post("/convert", async (c) => {
       headers: FETCH_HEADERS,
     });
     if (!resp.ok) {
-      logger.warn({ url: blogUrl, status: resp.status }, "Failed to fetch article URL");
       return renderUI({
         error: `Could not fetch that URL (HTTP ${resp.status}). Is it publicly accessible?`,
         emailEnabled,
@@ -155,7 +147,6 @@ app.post("/convert", async (c) => {
     }
     html = await resp.text();
   } catch (err) {
-    logger.error({ err, url: blogUrl }, "Error fetching article URL");
     const msg = err instanceof Error ? err.message : String(err);
     return renderUI({ error: `Failed to fetch the URL: ${msg}`, emailEnabled });
   }
@@ -181,7 +172,6 @@ app.post("/convert", async (c) => {
           downloadTitle: result.title,
         });
       } catch (err) {
-        logger.error({ err, url: blogUrl }, "Failed to send email after conversion");
         const msg = err instanceof Error ? err.message : String(err);
         return renderUI({ error: `Failed to send email: ${msg}`, emailEnabled });
       }
@@ -191,7 +181,6 @@ app.post("/convert", async (c) => {
       303,
     );
   } catch (err) {
-    logger.error({ err, url: blogUrl }, "Failed to convert article");
     const msg = err instanceof Error ? err.message : String(err);
     return renderUI({ error: `Failed to convert article: ${msg}`, emailEnabled });
   }
