@@ -3,30 +3,28 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "npm install --os=linux --cpu=arm64 sharp && sam build && node scripts/copy-sharp.js",
-    "deploy": "npm run build && sam deploy --profile personal-development",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3",
-    "@aws-sdk/client-s3": "^3",
-    "@aws-sdk/lib-dynamodb": "^3",
+    "@cf-wasm/photon": "^0.3.4",
     "@mozilla/readability": "^0.6.0",
     "dom-serializer": "^3.0.0",
     "fflate": "^0.8.2",
     "hono": "^4.12.9",
     "htmlparser2": "^12.0.0",
     "linkedom": "^0.18.12",
-    "sanitize-html": "^2.17.2",
-    "sharp": "^0.33.5"
+    "sanitize-html": "^2.17.2"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.14.0",
+    "@cloudflare/workers-types": "^4.20260329.1",
     "@types/sanitize-html": "^2.16.1",
-    "@types/sharp": "^0.31.0",
-    "esbuild": "0.27.7",
     "typescript": "^5.7.2",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.2",
+    "wrangler": "^3.0.0"
   }
 }

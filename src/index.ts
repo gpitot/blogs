@@ -1,11 +1,10 @@
 import { Hono } from "hono";
-import { handle } from "hono/aws-lambda";
-import type { AwsEnv } from "./repositories/types.ts";
+import type { Env } from "./repositories/types.ts";
 import {
-  DynamoSubscriptionRepo,
-  DynamoArticleRepo,
-  DynamoS3EpubRepo,
-} from "./repositories/aws.ts";
+  KvSubscriptionRepo,
+  KvArticleRepo,
+  KvEpubRepo,
+} from "./repositories/kv.ts";
 import { BlogsService } from "./services/blogs.service.ts";
 import { PostsService } from "./services/posts.service.ts";
 import { ConversionService } from "./services/conversion.service.ts";
@@ -14,18 +13,6 @@ import { processArticleImages } from "./services/images.ts";
 import { urlToKey } from "./utils.ts";
 import { renderUI, renderSubscriptionsUI, renderWeeklyBooksUI, renderEmailFormUI } from "./ui.ts";
 import { sendEpubEmail, isEmailAllowed } from "./services/email.service.ts";
-
-// ---------------------------------------------------------------------------
-// Environment — read once at Lambda cold start
-// ---------------------------------------------------------------------------
-
-const env: AwsEnv = {
-  DYNAMO_TABLE: process.env.DYNAMO_TABLE_NAME ?? "",
-  S3_BUCKET: process.env.S3_BUCKET_NAME ?? "",
-  RESEND_API_KEY: process.env.RESEND_API_KEY,
-  RESEND_FROM_ADDRESS: process.env.RESEND_FROM_ADDRESS,
-  EMAIL_ALLOWLIST: process.env.EMAIL_ALLOWLIST,
-};
 
 const FETCH_HEADERS = {
   "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)",
@@ -40,35 +27,36 @@ function defaultFetchHtml(url: string): Promise<string | null> {
     .catch(() => null);
 }
 
-export function createServices(e: AwsEnv) {
+function createServices(env: Env) {
+  const kv = env.EPUB_CACHE;
   return {
-    blogs: new BlogsService(new DynamoSubscriptionRepo(e), {
+    blogs: new BlogsService(new KvSubscriptionRepo(kv), {
       detectFeedUrl,
       fetchAndParseFeed,
     }),
-    posts: new PostsService(new DynamoArticleRepo(e), {
+    posts: new PostsService(new KvArticleRepo(kv), {
       fetch: defaultFetchHtml,
     }),
-    conversion: new ConversionService(new DynamoS3EpubRepo(e), {
+    conversion: new ConversionService(new KvEpubRepo(kv), {
       processArticleImages,
     }),
   };
 }
 
-const app = new Hono();
+const app = new Hono<{ Bindings: Env }>();
 
 // ---------------------------------------------------------------------------
 // Single-article conversion
 // ---------------------------------------------------------------------------
 
 app.get("/", async (c) => {
-  const { conversion } = createServices(env);
+  const { conversion } = createServices(c.env);
   const cachedArticles = await conversion.listCachedArticles();
-  return renderUI({ emailEnabled: !!env.RESEND_API_KEY, cachedArticles });
+  return renderUI({ emailEnabled: !!c.env.RESEND_API_KEY, cachedArticles });
 });
 
 app.post("/convert", async (c) => {
-  const emailEnabled = !!env.RESEND_API_KEY;
+  const emailEnabled = !!c.env.RESEND_API_KEY;
   let blogUrl: string;
   let emailAddress: string | null = null;
   try {
@@ -85,7 +73,7 @@ app.post("/convert", async (c) => {
     const rawEmail = body.get("email");
     if (rawEmail && typeof rawEmail === "string" && rawEmail.trim()) {
       emailAddress = rawEmail.trim();
-      if (!isEmailAllowed(emailAddress, env.EMAIL_ALLOWLIST)) {
+      if (!isEmailAllowed(emailAddress, c.env.EMAIL_ALLOWLIST)) {
         return renderUI({
           error: "That email address is not on the allow list.",
           emailEnabled,
@@ -99,19 +87,19 @@ app.post("/convert", async (c) => {
     });
   }
 
-  const { conversion } = createServices(env);
+  const { conversion } = createServices(c.env);
 
   const cacheKey = await urlToKey(blogUrl);
   const cached = await conversion.getCachedConversion(cacheKey);
   if (cached) {
-    if (emailAddress && env.RESEND_API_KEY) {
+    if (emailAddress && c.env.RESEND_API_KEY) {
       try {
         const buf = await conversion.getEpubData(cached.kvKey);
         if (buf) {
           const safeTitle = cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
           await sendEpubEmail({
-            apiKey: env.RESEND_API_KEY,
-            fromAddress: env.RESEND_FROM_ADDRESS ?? "",
+            apiKey: c.env.RESEND_API_KEY,
+            fromAddress: c.env.RESEND_FROM_ADDRESS,
             to: emailAddress,
             title: cached.title,
             filename: `${safeTitle}.epub`,
@@ -139,6 +127,7 @@ app.post("/convert", async (c) => {
       signal: AbortSignal.timeout(5000),
       headers: FETCH_HEADERS,
     });
+    console.log('Fetch response status:', resp);
     if (!resp.ok) {
       return renderUI({
         error: `Could not fetch that URL (HTTP ${resp.status}). Is it publicly accessible?`,
@@ -148,17 +137,18 @@ app.post("/convert", async (c) => {
     html = await resp.text();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.log('Fetch error:', err);
     return renderUI({ error: `Failed to fetch the URL: ${msg}`, emailEnabled });
   }
 
   try {
     const result = await conversion.convertSingleArticle(blogUrl, html);
-    if (emailAddress && env.RESEND_API_KEY) {
+    if (emailAddress && c.env.RESEND_API_KEY) {
       try {
         const safeTitle = result.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
         await sendEpubEmail({
-          apiKey: env.RESEND_API_KEY,
-          fromAddress: env.RESEND_FROM_ADDRESS ?? "",
+          apiKey: c.env.RESEND_API_KEY,
+          fromAddress: c.env.RESEND_FROM_ADDRESS,
           to: emailAddress,
           title: result.title,
           filename: `${safeTitle}.epub`,
@@ -182,6 +172,7 @@ app.post("/convert", async (c) => {
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.log('Conversion error:', msg);
     return renderUI({ error: `Failed to convert article: ${msg}`, emailEnabled });
   }
 });
@@ -190,7 +181,7 @@ app.get("/download/:key", async (c) => {
   const key = c.req.param("key");
   if (!/^[a-f0-9]+$/.test(key)) return c.notFound();
 
-  const { conversion } = createServices(env);
+  const { conversion } = createServices(c.env);
   const cached = await conversion.getCachedConversion(`epub:${key}`);
   if (!cached) {
     return c.html(
@@ -227,7 +218,7 @@ app.get("/download/article/:id", async (c) => {
   const id = c.req.param("id");
   if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
 
-  const { posts, conversion } = createServices(env);
+  const { posts, conversion } = createServices(c.env);
   const article = await posts.getArticle(id);
   if (!article) {
     return c.html(
@@ -253,17 +244,17 @@ app.get("/download/article/:id", async (c) => {
 // ---------------------------------------------------------------------------
 
 app.get("/subscriptions", async (c) => {
-  const { blogs } = createServices(env);
+  const { blogs } = createServices(c.env);
   const subs = await blogs.listSubscriptions();
-  return renderSubscriptionsUI(subs, { emailEnabled: !!env.RESEND_API_KEY });
+  return renderSubscriptionsUI(subs, { emailEnabled: !!c.env.RESEND_API_KEY });
 });
 
 app.post("/subscriptions", async (c) => {
   const body = await c.req.formData();
   const raw = body.get("url");
-  const emailEnabled = !!env.RESEND_API_KEY;
+  const emailEnabled = !!c.env.RESEND_API_KEY;
 
-  const { blogs } = createServices(env);
+  const { blogs } = createServices(c.env);
 
   if (!raw || typeof raw !== "string") {
     const subs = await blogs.listSubscriptions();
@@ -302,7 +293,7 @@ app.post("/subscriptions", async (c) => {
 app.post("/subscriptions/:id/delete", async (c) => {
   const id = c.req.param("id");
   if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
-  const { blogs } = createServices(env);
+  const { blogs } = createServices(c.env);
   await blogs.unsubscribe(id);
   return c.redirect("/subscriptions", 303);
 });
@@ -312,16 +303,16 @@ app.post("/subscriptions/:id/delete", async (c) => {
 // ---------------------------------------------------------------------------
 
 app.get("/weekly-books", async (c) => {
-  const { conversion } = createServices(env);
+  const { conversion } = createServices(c.env);
   const books = await conversion.listWeeklyBooks();
-  return renderWeeklyBooksUI(books, { emailEnabled: !!env.RESEND_API_KEY });
+  return renderWeeklyBooksUI(books, { emailEnabled: !!c.env.RESEND_API_KEY });
 });
 
 app.get("/download/weekly/:weekKey", async (c) => {
   const weekKey = c.req.param("weekKey");
   if (!/^\d{4}-W\d{2}$/.test(weekKey)) return c.notFound();
 
-  const { conversion } = createServices(env);
+  const { conversion } = createServices(c.env);
   const result = await conversion.getWeeklyBook(weekKey);
   if (!result) {
     return c.html(
@@ -351,9 +342,9 @@ app.get("/email/:type/:id", async (c) => {
   const type = c.req.param("type");
   const id = c.req.param("id");
 
-  if (!env.RESEND_API_KEY) return c.notFound();
+  if (!c.env.RESEND_API_KEY) return c.notFound();
 
-  const { conversion, posts } = createServices(env);
+  const { conversion, posts } = createServices(c.env);
 
   if (type === "weekly") {
     if (!/^\d{4}-W\d{2}$/.test(id)) return c.notFound();
@@ -419,15 +410,15 @@ app.post("/send-epub", async (c) => {
     return makeFormPage({ error: "Please provide an email address." });
   }
 
-  if (!env.RESEND_API_KEY) {
+  if (!c.env.RESEND_API_KEY) {
     return makeFormPage({ error: "Email delivery is not configured." });
   }
 
-  if (!isEmailAllowed(email, env.EMAIL_ALLOWLIST)) {
+  if (!isEmailAllowed(email, c.env.EMAIL_ALLOWLIST)) {
     return makeFormPage({ error: "That email address is not on the allow list." });
   }
 
-  const { conversion, posts } = createServices(env);
+  const { conversion, posts } = createServices(c.env);
 
   try {
     let epubBytes: Uint8Array;
@@ -462,8 +453,8 @@ app.post("/send-epub", async (c) => {
     }
 
     await sendEpubEmail({
-      apiKey: env.RESEND_API_KEY,
-      fromAddress: env.RESEND_FROM_ADDRESS ?? "",
+      apiKey: c.env.RESEND_API_KEY,
+      fromAddress: c.env.RESEND_FROM_ADDRESS,
       to: email,
       title,
       filename,
@@ -484,7 +475,61 @@ app.post("/send-epub", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// Lambda handler export
+// Scheduled handler
 // ---------------------------------------------------------------------------
 
-export const handler = handle(app);
+async function runWeeklyJob(env: Env): Promise<void> {
+  console.log("[weekly] Checking subscriptions and compiling book...");
+  const { blogs, posts, conversion } = createServices(env);
+  const subs = await blogs.listSubscriptions();
+
+  const allArticles: import("./repositories/types.ts").PendingArticle[] = [];
+
+  for (const sub of subs) {
+    try {
+      const newItems = await blogs.checkForNewPosts(sub);
+      const saved: import("./repositories/types.ts").PendingArticle[] = [];
+
+      for (const item of newItems) {
+        try {
+          const article = await posts.fetchAndSave(item, sub.id, sub.title);
+          if (article) {
+            saved.push(article);
+            allArticles.push(article);
+          }
+        } catch (err) {
+          console.error(`[weekly] Failed to save ${item.link}:`, err);
+        }
+      }
+
+      if (saved.length > 0) {
+        await blogs.updateRecentArticles(sub, saved);
+      }
+
+      console.log(
+        `[weekly] "${sub.title}": ${saved.length} new articles saved.`,
+      );
+    } catch (err) {
+      console.error(`[weekly] Error checking "${sub.title}":`, err);
+    }
+  }
+
+  if (allArticles.length === 0) {
+    console.log(
+      "[weekly] No new articles this week, skipping book generation.",
+    );
+    return;
+  }
+
+  console.log(
+    `[weekly] Compiling ${allArticles.length} articles into book...`,
+  );
+  await conversion.compileWeeklyBook(allArticles);
+}
+
+export default {
+  fetch: app.fetch.bind(app),
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(runWeeklyJob(env));
+  },
+};
