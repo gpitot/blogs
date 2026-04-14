@@ -150,7 +150,14 @@ export async function fetchAndParseFeed(feedUrl: string): Promise<ParsedFeed> {
   logger.debug({ feedUrl }, "Fetching RSS feed");
   const resp = await fetch(feedUrl, {
     signal: AbortSignal.timeout(20000),
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)" },
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept:
+        "application/rss+xml,application/atom+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Accept-Encoding": "gzip, deflate, br",
+    },
   });
   if (!resp.ok) {
     logger.error({ feedUrl, status: resp.status }, "Failed to fetch feed");
@@ -166,7 +173,14 @@ export async function detectFeedUrl(blogUrl: string): Promise<string | null> {
   try {
     const resp = await fetch(blogUrl, {
       signal: AbortSignal.timeout(15000),
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)" },
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept:
+          "application/rss+xml,application/atom+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+      },
     });
     if (!resp.ok) return null;
 
@@ -223,7 +237,14 @@ export async function detectFeedUrl(blogUrl: string): Promise<string | null> {
       const probe = await fetch(feedUrl, {
         method: "HEAD",
         signal: AbortSignal.timeout(8000),
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; BlogToEpub/1.0)" },
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept:
+            "application/rss+xml,application/atom+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Accept-Encoding": "gzip, deflate, br",
+        },
       });
       if (probe.ok) {
         const ct = probe.headers.get("content-type") || "";
