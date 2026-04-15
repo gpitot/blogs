@@ -1,6 +1,7 @@
 import type { AwsEnv, PendingArticle } from "./repositories/types.ts";
 import { createServices } from "./index.ts";
 import { createLogger } from "./logger.ts";
+import { loadSecrets } from "./secrets.ts";
 
 const logger = createLogger("weekly");
 
@@ -68,5 +69,7 @@ async function runWeeklyJob(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export const handler = async (): Promise<void> => {
+  await loadSecrets();
+  env.RESEND_API_KEY = process.env.RESEND_API_KEY;
   await runWeeklyJob();
 };

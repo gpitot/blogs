@@ -1,5 +1,9 @@
 import { parseDocument } from "htmlparser2";
 import { createLogger } from "../logger.ts";
+import { proxiedFetch } from "../http/proxied-fetch.ts";
+
+const FEED_ACCEPT =
+  "application/rss+xml,application/atom+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7";
 
 const logger = createLogger("rss");
 
@@ -148,16 +152,9 @@ export function parseFeedXml(xml: string): ParsedFeed {
 
 export async function fetchAndParseFeed(feedUrl: string): Promise<ParsedFeed> {
   logger.debug({ feedUrl }, "Fetching RSS feed");
-  const resp = await fetch(feedUrl, {
+  const resp = await proxiedFetch(feedUrl, {
     signal: AbortSignal.timeout(20000),
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      Accept:
-        "application/rss+xml,application/atom+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7",
-      "Accept-Language": "en-US,en;q=0.9",
-      "Accept-Encoding": "gzip, deflate, br",
-    },
+    headers: { Accept: FEED_ACCEPT },
   });
   if (!resp.ok) {
     logger.error({ feedUrl, status: resp.status }, "Failed to fetch feed");
@@ -171,16 +168,9 @@ export async function fetchAndParseFeed(feedUrl: string): Promise<ParsedFeed> {
 export async function detectFeedUrl(blogUrl: string): Promise<string | null> {
   let html: string;
   try {
-    const resp = await fetch(blogUrl, {
+    const resp = await proxiedFetch(blogUrl, {
       signal: AbortSignal.timeout(15000),
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        Accept:
-          "application/rss+xml,application/atom+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-      },
+      headers: { Accept: FEED_ACCEPT },
     });
     if (!resp.ok) return null;
 
@@ -234,17 +224,10 @@ export async function detectFeedUrl(blogUrl: string): Promise<string | null> {
   for (const path of commonPaths) {
     const feedUrl = `${protocol}//${host}${path}`;
     try {
-      const probe = await fetch(feedUrl, {
+      const probe = await proxiedFetch(feedUrl, {
         method: "HEAD",
         signal: AbortSignal.timeout(8000),
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          Accept:
-            "application/rss+xml,application/atom+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7",
-          "Accept-Language": "en-US,en;q=0.9",
-          "Accept-Encoding": "gzip, deflate, br",
-        },
+        headers: { Accept: FEED_ACCEPT },
       });
       if (probe.ok) {
         const ct = probe.headers.get("content-type") || "";

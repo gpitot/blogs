@@ -9,7 +9,7 @@ profile = "personal-development"
 confirm_changeset = true
 capabilities = "CAPABILITY_IAM"
 disable_rollback = true
-parameter_overrides = "ResendFromAddress=\"blogs@northmanlysquash.com\" EmailAllowlist=\"guillaume.pitot_azwKNn@kindle.com\""
+parameter_overrides = "ResendFromAddress=\"blogs@northmanlysquash.com\" EmailAllowlist=\"guillaume.pitot_azwKNn@kindle.com\" ProxyUrl=\"https://blog-dl-proxy.guillaume-pitot.workers.dev\""
 image_repositories = []
 
 [default.global.parameters]

@@ -15,6 +15,8 @@ import { urlToKey } from "./utils.ts";
 import { renderUI, renderSubscriptionsUI, renderWeeklyBooksUI, renderEmailFormUI } from "./ui.ts";
 import { sendEpubEmail, isEmailAllowed } from "./services/email.service.ts";
 import { createLogger } from "./logger.ts";
+import { proxiedFetch } from "./http/proxied-fetch.ts";
+import { loadSecrets } from "./secrets.ts";
 
 const logger = createLogger("api");
 
@@ -30,20 +32,13 @@ const env: AwsEnv = {
   EMAIL_ALLOWLIST: process.env.EMAIL_ALLOWLIST,
 };
 
-const FETCH_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  Accept:
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Accept-Encoding": "gzip, deflate, br",
-};
+async function ensureSecrets(): Promise<void> {
+  await loadSecrets();
+  env.RESEND_API_KEY = process.env.RESEND_API_KEY;
+}
 
 function defaultFetchHtml(url: string): Promise<string | null> {
-  return fetch(url, {
-    signal: AbortSignal.timeout(25000),
-    headers: FETCH_HEADERS,
-  })
+  return proxiedFetch(url, { signal: AbortSignal.timeout(25000) })
     .then((resp) => (resp.ok ? resp.text() : null))
     .catch(() => null);
 }
@@ -64,6 +59,11 @@ export function createServices(e: AwsEnv) {
 }
 
 const app = new Hono();
+
+app.use("*", async (_c, next) => {
+  await ensureSecrets();
+  await next();
+});
 
 // ---------------------------------------------------------------------------
 // Single-article conversion
@@ -147,9 +147,8 @@ app.post("/convert", async (c) => {
 
   let html: string;
   try {
-    const resp = await fetch(blogUrl, {
+    const resp = await proxiedFetch(blogUrl, {
       signal: AbortSignal.timeout(5000),
-      headers: FETCH_HEADERS,
     });
     if (!resp.ok) {
       logger.warn({ url: blogUrl, status: resp.status }, "Failed to fetch article URL");

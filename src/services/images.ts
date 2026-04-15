@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { createLogger } from "../logger.ts";
+import { proxiedFetch } from "../http/proxied-fetch.ts";
 
 const logger = createLogger("images");
 
@@ -75,15 +76,9 @@ async function downloadAndProcess(
 ): Promise<EpubImage | null> {
   let resp: Response;
   try {
-    resp = await fetch(url, {
+    resp = await proxiedFetch(url, {
       signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT),
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-      },
+      headers: { Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8" },
     });
   } catch {
     return null;

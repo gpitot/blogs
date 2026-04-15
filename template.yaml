@@ -6,14 +6,13 @@ Description: Blog-to-EPUB converter — Lambda + DynamoDB + S3
 # Parameters (set via samconfig.toml or --parameter-overrides)
 # ---------------------------------------------------------------------------
 Parameters:
-  ResendApiKey:
-    Type: String
-    Default: ''
-    NoEcho: true
   ResendFromAddress:
     Type: String
     Default: ''
   EmailAllowlist:
+    Type: String
+    Default: ''
+  ProxyUrl:
     Type: String
     Default: ''
 
@@ -31,9 +30,11 @@ Globals:
         LOG_LEVEL: 'info'
         DYNAMO_TABLE_NAME: !Ref BlogEpubTable
         S3_BUCKET_NAME: !Ref EpubBucket
-        RESEND_API_KEY: !Ref ResendApiKey
         RESEND_FROM_ADDRESS: !Ref ResendFromAddress
         EMAIL_ALLOWLIST: !Ref EmailAllowlist
+        PROXY_URL: !Ref ProxyUrl
+        SSM_RESEND_API_KEY_PARAM: /blogs/resend-api-key
+        SSM_PROXY_SECRET_PARAM: /blogs/proxy-secret
 
 # ---------------------------------------------------------------------------
 # Resources
@@ -98,6 +99,15 @@ Resources:
             TableName: !Ref BlogEpubTable
         - S3CrudPolicy:
             BucketName: !Ref EpubBucket
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/blogs/resend-api-key'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/blogs/proxy-secret'
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
       FunctionUrlConfig:
         AuthType: NONE
         Cors:
@@ -127,6 +137,15 @@ Resources:
             TableName: !Ref BlogEpubTable
         - S3CrudPolicy:
             BucketName: !Ref EpubBucket
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/blogs/resend-api-key'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/blogs/proxy-secret'
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
       Events:
         WeeklyCron:
           Type: ScheduleV2
