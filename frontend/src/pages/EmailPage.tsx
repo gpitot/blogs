@@ -37,9 +37,9 @@ export default function EmailPage() {
   if (metaError) {
     return (
       <div>
-        <p className="text-red-700">{metaError}</p>
-        <Link to={backUrl} className="text-blue-600 hover:underline text-sm mt-4 inline-block">
-          ← Back
+        <p className="text-rose-text">{metaError}</p>
+        <Link to={backUrl} className="text-teal hover:underline text-sm mt-4 inline-block">
+          &larr; Back
         </Link>
       </div>
     );
@@ -47,23 +47,25 @@ export default function EmailPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">Send EPUB by Email</h1>
-      {title && <p className="text-gray-500 mb-6">&ldquo;{title}&rdquo;</p>}
+      <h2 className="font-heading text-xl font-bold mb-1 text-brown">Send EPUB by Email</h2>
+      {title && (
+        <p className="text-brown-light text-sm mb-5 italic">&ldquo;{title}&rdquo;</p>
+      )}
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md">
+        <div className="mb-4 p-3 bg-rose-bg border border-rose-border text-rose-text rounded-sm text-sm">
           {error}
         </div>
       )}
       {success && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-800 rounded-md">
+        <div className="mb-4 p-3 bg-sage-bg border border-sage-border text-sage-text rounded-sm text-sm">
           {success}
         </div>
       )}
 
       {!success && (
         <form onSubmit={handleSubmit}>
-          <label className="block font-medium mb-1.5" htmlFor="email">
+          <label className="block font-medium text-sm mb-1" htmlFor="email">
             Email address
           </label>
           <input
@@ -74,20 +76,20 @@ export default function EmailPage() {
             placeholder="you@example.com"
             required
             autoComplete="email"
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 bg-parchment border border-tan rounded-sm text-sm text-brown shadow-[inset_1px_1px_3px_rgba(0,0,0,0.06)] focus:outline-none focus:ring-1 focus:ring-teal focus:border-teal"
           />
           <button
             type="submit"
             disabled={loading}
-            className="mt-3 px-5 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+            className="mt-3 px-5 py-2 bg-teal text-cream text-sm font-semibold rounded-sm hover:bg-teal-dark disabled:opacity-50 cursor-pointer tracking-wide uppercase"
           >
-            {loading ? "Sending…" : "Send EPUB"}
+            {loading ? "Sending\u2026" : "Send EPUB"}
           </button>
         </form>
       )}
 
-      <Link to={backUrl} className="text-blue-600 hover:underline text-sm mt-6 inline-block">
-        ← Back
+      <Link to={backUrl} className="text-teal hover:underline text-sm mt-6 inline-block">
+        &larr; Back
       </Link>
     </div>
   );

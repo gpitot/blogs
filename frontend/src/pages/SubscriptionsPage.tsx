@@ -62,17 +62,17 @@ export default function SubscriptionsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">Blog Subscriptions</h1>
-      <p className="text-gray-500 mb-6">
+      <h2 className="font-heading text-xl font-bold mb-1 text-brown">Blog Subscriptions</h2>
+      <p className="text-brown-light text-sm mb-5">
         Subscribe to a blog&apos;s RSS feed. New posts are saved automatically and compiled into a{" "}
-        <Link to="/weekly-books" className="text-blue-600 hover:underline">
+        <Link to="/weekly-books" className="text-teal underline hover:text-teal-dark">
           weekly book
         </Link>{" "}
         every Monday.
       </p>
 
       <form onSubmit={handleSubscribe}>
-        <label className="block font-medium mb-1.5" htmlFor="sub-url">
+        <label className="block font-medium text-sm mb-1" htmlFor="sub-url">
           Blog or feed URL
         </label>
         <input
@@ -83,51 +83,54 @@ export default function SubscriptionsPage() {
           placeholder="https://example.com or https://example.com/feed"
           required
           autoComplete="off"
-          className="w-full px-3 py-2 border border-gray-300 rounded-md text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full px-3 py-2 bg-parchment border border-tan rounded-sm text-sm text-brown shadow-[inset_1px_1px_3px_rgba(0,0,0,0.06)] focus:outline-none focus:ring-1 focus:ring-teal focus:border-teal"
         />
         <button
           type="submit"
           disabled={loading}
-          className="mt-3 px-5 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+          className="mt-3 px-5 py-2 bg-teal text-cream text-sm font-semibold rounded-sm hover:bg-teal-dark disabled:opacity-50 cursor-pointer tracking-wide uppercase"
         >
-          {loading ? "Subscribing…" : "Subscribe"}
+          {loading ? "Subscribing\u2026" : "Subscribe"}
         </button>
       </form>
 
       {error && (
-        <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md">
+        <div className="mt-4 p-3 bg-rose-bg border border-rose-border text-rose-text rounded-sm text-sm">
           {error}
         </div>
       )}
       {success && (
-        <div className="mt-4 p-3 bg-green-50 border border-green-200 text-green-800 rounded-md">
+        <div className="mt-4 p-3 bg-sage-bg border border-sage-border text-sage-text rounded-sm text-sm">
           {success}
         </div>
       )}
 
-      <h2 className="text-lg font-semibold mt-7 mb-3">Your subscriptions</h2>
+      <h3 className="font-heading text-lg font-bold mt-8 mb-3 text-brown">Your Subscriptions</h3>
 
       {subs.length === 0 ? (
-        <p className="text-gray-400 italic text-sm">
+        <p className="text-brown-light italic text-sm">
           No subscriptions yet. Add a blog above to get started.
         </p>
       ) : (
         <ul className="space-y-3">
           {subs.map((sub) => (
-            <li key={sub.id} className="border border-gray-200 rounded-lg p-4 bg-white">
+            <li
+              key={sub.id}
+              className="border border-tan rounded-sm p-4 bg-cream shadow-[1px_1px_4px_rgba(0,0,0,0.05)]"
+            >
               <div className="flex justify-between items-start gap-2">
                 <div>
-                  <p className="font-semibold">{sub.title}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="font-heading font-bold text-brown">{sub.title}</p>
+                  <p className="text-xs text-brown-light mt-0.5">
                     <a
                       href={sub.siteUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-blue-600 hover:underline"
+                      className="text-teal hover:underline"
                     >
                       {sub.siteUrl}
                     </a>
-                    {" · "}
+                    {" \u00b7 "}
                     {sub.lastChecked
                       ? `Last checked ${formatRelative(sub.lastChecked)}`
                       : "Never checked"}
@@ -135,15 +138,15 @@ export default function SubscriptionsPage() {
                 </div>
                 <button
                   onClick={() => handleDelete(sub.id)}
-                  className="shrink-0 px-2.5 py-1 bg-red-600 text-white text-xs font-semibold rounded hover:bg-red-700 cursor-pointer"
+                  className="shrink-0 px-2.5 py-1 bg-rose-bg border border-rose-border text-rose-text text-xs font-semibold rounded-sm hover:bg-rose-text hover:text-cream cursor-pointer"
                 >
                   Remove
                 </button>
               </div>
 
               {sub.recentArticles.length === 0 ? (
-                <p className="text-xs text-gray-400 italic mt-2">
-                  No articles yet – new posts will appear here after the next scheduled check.
+                <p className="text-xs text-brown-light italic mt-2">
+                  No articles yet &ndash; new posts will appear here after the next scheduled check.
                 </p>
               ) : (
                 <ul className="mt-2 space-y-1">
@@ -151,15 +154,15 @@ export default function SubscriptionsPage() {
                     <li key={a.id} className="text-sm flex items-center gap-2 flex-wrap">
                       <a
                         href={downloadUrl(`/download/article/${a.id}`)}
-                        className="text-blue-600 hover:underline"
+                        className="text-teal hover:underline"
                       >
                         {a.title}
                       </a>
-                      <span className="text-gray-400 text-xs">{formatDate(a.createdAt)}</span>
+                      <span className="text-brown-light text-xs">{formatDate(a.createdAt)}</span>
                       {emailEnabled && (
                         <Link
                           to={`/email/article/${a.id}`}
-                          className="text-xs text-blue-600 hover:underline"
+                          className="text-xs text-teal hover:underline"
                         >
                           Email
                         </Link>

@@ -1,1 +1,38 @@
 @import "tailwindcss";
+
+@theme {
+  --color-parchment: #f5f0e8;
+  --color-cream: #faf7f2;
+  --color-tan: #d4c9b5;
+  --color-tan-dark: #b8a990;
+  --color-brown: #3d2e1f;
+  --color-brown-light: #7a6e5d;
+  --color-teal: #2a5a4a;
+  --color-teal-dark: #1e4436;
+  --color-sage-bg: #e8f0e4;
+  --color-sage-text: #2d5a3a;
+  --color-rose-bg: #f0e4e4;
+  --color-rose-text: #8b3a3a;
+  --color-rose-border: #d4b5b5;
+  --color-sage-border: #b5c9b5;
+  --font-heading: "Libre Baskerville", "Georgia", serif;
+  --font-mono: "IBM Plex Mono", "Courier New", monospace;
+}
+
+body {
+  background-color: var(--color-parchment);
+  color: var(--color-brown);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-heading);
+}
+
+input[type="url"],
+input[type="email"],
+input[type="text"] {
+  font-family: var(--font-mono);
+}

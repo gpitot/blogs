@@ -48,13 +48,13 @@ export default function ConvertPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">Blog to EPUB</h1>
-      <p className="text-gray-500 mb-6">
+      <h2 className="font-heading text-xl font-bold mb-1 text-brown">Convert Article</h2>
+      <p className="text-brown-light text-sm mb-5">
         Paste a blog post URL and download it as an EPUB for your e-reader.
       </p>
 
       <form onSubmit={handleSubmit}>
-        <label className="block font-medium mb-1.5" htmlFor="url">
+        <label className="block font-medium text-sm mb-1" htmlFor="url">
           Blog post URL
         </label>
         <input
@@ -65,14 +65,14 @@ export default function ConvertPage() {
           placeholder="https://example.com/post/article-title"
           required
           autoComplete="off"
-          className="w-full px-3 py-2 border border-gray-300 rounded-md text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full px-3 py-2 bg-parchment border border-tan rounded-sm text-sm text-brown shadow-[inset_1px_1px_3px_rgba(0,0,0,0.06)] focus:outline-none focus:ring-1 focus:ring-teal focus:border-teal"
         />
         {emailEnabled && (
           <>
-            <label className="block font-medium mt-3 mb-1.5" htmlFor="email">
+            <label className="block font-medium text-sm mt-3 mb-1" htmlFor="email">
               Email address{" "}
-              <span className="font-normal text-gray-400">
-                (optional – receive EPUB in your inbox)
+              <span className="font-normal text-brown-light italic">
+                (optional &ndash; receive EPUB in your inbox)
               </span>
             </label>
             <input
@@ -82,27 +82,27 @@ export default function ConvertPage() {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
               autoComplete="email"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 bg-parchment border border-tan rounded-sm text-sm text-brown shadow-[inset_1px_1px_3px_rgba(0,0,0,0.06)] focus:outline-none focus:ring-1 focus:ring-teal focus:border-teal"
             />
           </>
         )}
         <button
           type="submit"
           disabled={loading}
-          className="mt-3 px-5 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+          className="mt-3 px-5 py-2 bg-teal text-cream text-sm font-semibold rounded-sm hover:bg-teal-dark disabled:opacity-50 cursor-pointer tracking-wide uppercase"
         >
-          {loading ? "Converting…" : "Convert to EPUB"}
+          {loading ? "Converting\u2026" : "Convert to EPUB"}
         </button>
       </form>
 
       {error && (
-        <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md">
+        <div className="mt-4 p-3 bg-rose-bg border border-rose-border text-rose-text rounded-sm text-sm">
           {error}
         </div>
       )}
 
       {result && (
-        <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-md">
+        <div className="mt-4 p-3 bg-sage-bg border border-sage-border text-sage-text rounded-sm text-sm">
           {result.emailSentTo ? (
             <>
               EPUB sent to <strong>{result.emailSentTo}</strong>.{" "}
@@ -112,7 +112,7 @@ export default function ConvertPage() {
           )}
           <a
             href={downloadUrl(result.downloadUrl)}
-            className="text-green-700 font-semibold hover:underline"
+            className="font-semibold underline hover:text-teal-dark"
           >
             {result.emailSentTo ? "Download directly" : result.downloadTitle}
           </a>
@@ -121,32 +121,34 @@ export default function ConvertPage() {
 
       {cachedArticles.length > 0 && (
         <div>
-          <h2 className="text-lg font-semibold mt-7 mb-3">Recent Conversions</h2>
+          <h3 className="font-heading text-lg font-bold mt-8 mb-3 text-brown">
+            Recent Conversions
+          </h3>
           <ul className="space-y-2">
             {cachedArticles.map((a) => {
               const shortKey = a.cacheKey.replace("epub:", "");
               return (
                 <li
                   key={a.cacheKey}
-                  className="flex items-center justify-between border border-gray-200 rounded-lg p-3 bg-white gap-4"
+                  className="flex items-center justify-between border border-tan rounded-sm p-3 bg-cream shadow-[1px_1px_4px_rgba(0,0,0,0.05)] gap-4"
                 >
                   <div>
-                    <p className="font-semibold text-sm">{a.title}</p>
-                    <p className="text-xs text-gray-500">
-                      {Math.round(a.size / 1024)} KB · {formatDate(a.createdAt)}
+                    <p className="font-medium text-sm text-brown">{a.title}</p>
+                    <p className="text-xs text-brown-light">
+                      {Math.round(a.size / 1024)} KB &middot; {formatDate(a.createdAt)}
                     </p>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     <a
                       href={downloadUrl(`/download/${shortKey}`)}
-                      className="px-3 py-1 bg-blue-600 text-white text-sm font-semibold rounded hover:bg-blue-700"
+                      className="px-3 py-1 bg-teal text-cream text-xs font-semibold rounded-sm hover:bg-teal-dark uppercase tracking-wide"
                     >
                       Download
                     </a>
                     {emailEnabled && (
                       <Link
                         to={`/email/cached/${shortKey}`}
-                        className="text-xs text-blue-600 hover:underline"
+                        className="text-xs text-teal hover:underline"
                       >
                         Send to email
                       </Link>
