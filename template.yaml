@@ -110,10 +110,6 @@ Resources:
               Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
       FunctionUrlConfig:
         AuthType: NONE
-        Cors:
-          AllowOrigins: ['*']
-          AllowMethods: ['GET', 'POST']
-          AllowHeaders: ['content-type']
 
   # ── Weekly cron Lambda ────────────────────────────────────────────────────
   WeeklyFunction:
