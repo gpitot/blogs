@@ -41,3 +41,4 @@ epubs*
 
 .*.vars
 .aws-sam/*
+frontend/.env*

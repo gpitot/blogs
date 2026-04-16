@@ -60,7 +60,7 @@ export function createServices(e: AwsEnv) {
 
 const app = new Hono();
 
-app.use("*", cors());
+app.use("*", cors({ origin: "https://blog-dl.pages.dev" }));
 
 app.use("*", async (_c, next) => {
   await ensureSecrets();

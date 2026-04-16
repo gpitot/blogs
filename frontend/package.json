@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler pages deploy --branch mvp"
   },
   "dependencies": {
     "react": "^19",
@@ -20,6 +21,7 @@
     "@vitejs/plugin-react": "^4",
     "tailwindcss": "^4",
     "typescript": "^5.7",
-    "vite": "^7"
+    "vite": "^7",
+    "wrangler": "^4.83.0"
   }
 }
