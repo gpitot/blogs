@@ -2,7 +2,7 @@ import type {
   SubscriptionRepo,
   Subscription,
 } from "../repositories/types.ts";
-import { MAX_SEEN_GUIDS, MAX_RECENT_ARTICLES } from "../repositories/types.ts";
+import { MAX_SEEN_GUIDS } from "../repositories/types.ts";
 import type { FeedClient } from "./interfaces.ts";
 import type { FeedItem } from "./rss.ts";
 import { generateId } from "../utils.ts";
@@ -45,13 +45,9 @@ export class BlogsService {
       siteUrl: url,
       title: feed.title || url,
       addedAt: Date.now(),
-      lastChecked: Date.now(),
-      seenGuids: feed.items
-        .sort((a, b) => b.pubDate - a.pubDate)
-        .slice(5)
-        .map((i) => i.guid)
-        .slice(0, MAX_SEEN_GUIDS),
-      recentArticles: [],
+      lastChecked: null,
+      seenGuids: [],
+      convertedArticles: [],
     };
 
     await this.subs.put(sub);
@@ -89,23 +85,4 @@ export class BlogsService {
     return newItems;
   }
 
-  async updateRecentArticles(
-    sub: Subscription,
-    articles: Array<{ id: string; title: string; savedAt: number }>,
-  ): Promise<void> {
-    const newRecent = articles.map((a) => ({
-      id: a.id,
-      title: a.title,
-      createdAt: a.savedAt,
-    }));
-    const current = await this.subs.get(sub.id);
-    if (!current) return;
-    await this.subs.put({
-      ...current,
-      recentArticles: [...newRecent, ...current.recentArticles].slice(
-        0,
-        MAX_RECENT_ARTICLES,
-      ),
-    });
-  }
 }

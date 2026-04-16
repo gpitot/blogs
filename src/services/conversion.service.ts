@@ -63,6 +63,24 @@ export class ConversionService {
     return { cacheKey, epubBytes, title };
   }
 
+  async convertAndCacheSubscriptionArticle(
+    article: PendingArticle,
+  ): Promise<string> {
+    const cacheKey = await urlToKey(article.url);
+    const epubBytes = await this.convertArticleToEpub(article);
+    const kvKey = `epub-data:${cacheKey.replace("epub:", "")}`;
+    await this.epubs.putEpubData(kvKey, epubBytes, EPUB_CACHE_TTL);
+    const createdAt = Date.now();
+    await this.epubs.putCachedMeta(cacheKey, {
+      kvKey,
+      title: article.title,
+      createdAt,
+      size: epubBytes.byteLength,
+    });
+    logger.info({ title: article.title, size: epubBytes.byteLength }, "Subscription article converted and cached");
+    return cacheKey;
+  }
+
   async convertArticleToEpub(article: PendingArticle): Promise<Uint8Array> {
     const { html: contentWithImages, images } =
       await this.images.processArticleImages(article.content, article.url);
