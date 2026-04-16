@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { getHome, convert, downloadUrl } from "../api";
+import KindleHelp from "../KindleHelp";
 import type { CachedArticleMeta } from "../types";
 
 function formatDate(ms: number): string {
@@ -84,6 +85,7 @@ export default function ConvertPage() {
               autoComplete="email"
               className="w-full px-3 py-2 bg-parchment border border-tan rounded-sm text-sm text-brown shadow-[inset_1px_1px_3px_rgba(0,0,0,0.06)] focus:outline-none focus:ring-1 focus:ring-teal focus:border-teal"
             />
+            <KindleHelp />
           </>
         )}
         <button

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getEmailMeta, sendEpub } from "../api";
+import KindleHelp from "../KindleHelp";
 
 export default function EmailPage() {
   const { type = "", id = "" } = useParams<{ type: string; id: string }>();
@@ -78,6 +79,7 @@ export default function EmailPage() {
             autoComplete="email"
             className="w-full px-3 py-2 bg-parchment border border-tan rounded-sm text-sm text-brown shadow-[inset_1px_1px_3px_rgba(0,0,0,0.06)] focus:outline-none focus:ring-1 focus:ring-teal focus:border-teal"
           />
+          <KindleHelp />
           <button
             type="submit"
             disabled={loading}
