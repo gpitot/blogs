@@ -5,6 +5,7 @@
   "scripts": {
     "build": "npm install --os=linux --cpu=arm64 sharp && sam build && node scripts/copy-sharp.js",
     "deploy": "npm run build && sam deploy --profile personal-development --no-confirm-changeset",
+    "sync": "npm run build && sam sync --stack-name blogs --profile personal-development --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

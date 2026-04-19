@@ -29,6 +29,11 @@ export class BlogsService {
       };
     }
 
+    const existing = await this.subs.list();
+    if (existing.some((s) => s.feedUrl === feedUrl)) {
+      return { error: "You are already subscribed to this feed." };
+    }
+
     let feed;
     try {
       feed = await this.feed.fetchAndParseFeed(feedUrl);
@@ -61,7 +66,8 @@ export class BlogsService {
   }
 
   async listSubscriptions(): Promise<Subscription[]> {
-    return this.subs.list();
+    const subs = await this.subs.list();
+    return subs.sort((a, b) => b.addedAt - a.addedAt);
   }
 
   async checkForNewPosts(sub: Subscription): Promise<FeedItem[]> {

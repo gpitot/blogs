@@ -1,5 +1,6 @@
-export interface RecentArticle {
-  id: string;
+export interface ConvertedArticle {
+  cacheKey: string;
+  articleId: string;
   title: string;
   createdAt: number;
 }
@@ -12,7 +13,7 @@ export interface Subscription {
   addedAt: number;
   lastChecked: number | null;
   seenGuids: string[];
-  recentArticles: RecentArticle[];
+  convertedArticles: ConvertedArticle[];
 }
 
 export interface WeeklyBookMeta {

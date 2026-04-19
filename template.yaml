@@ -224,6 +224,14 @@ Resources:
             TableName: !Ref BlogEpubTable
         - Statement:
             - Effect: Allow
+              Action: ssm:GetParameters
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/blogs/resend-api-key'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/blogs/proxy-secret'
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
+            - Effect: Allow
               Action: sqs:SendMessage
               Resource: !GetAtt ConvertArticleQueue.Arn
             - Effect: Allow
@@ -256,7 +264,6 @@ Resources:
     Properties:
       Handler: convert-article.handler
       Timeout: 300
-      ReservedConcurrentExecutions: 5
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref BlogEpubTable

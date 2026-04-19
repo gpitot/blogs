@@ -144,29 +144,31 @@ export default function SubscriptionsPage() {
                 </button>
               </div>
 
-              {sub.recentArticles.length === 0 ? (
+              {(sub.convertedArticles ?? []).length === 0 ? (
                 <p className="text-xs text-brown-light italic mt-2">
                   No articles yet &ndash; new posts will appear here after the next scheduled check.
                 </p>
               ) : (
-                <ul className="mt-2 space-y-1">
-                  {sub.recentArticles.map((a) => (
-                    <li key={a.id} className="text-sm flex items-center gap-2 flex-wrap">
+                <ul className="mt-2 divide-y divide-brown-light/20">
+                  {(sub.convertedArticles ?? []).map((a) => (
+                    <li key={a.articleId} className="py-1.5 first:pt-0">
                       <a
-                        href={downloadUrl(`/download/article/${a.id}`)}
-                        className="text-teal hover:underline"
+                        href={downloadUrl(`/download/article/${a.articleId}`)}
+                        className="text-sm text-teal hover:underline"
                       >
                         {a.title}
                       </a>
-                      <span className="text-brown-light text-xs">{formatDate(a.createdAt)}</span>
-                      {emailEnabled && (
-                        <Link
-                          to={`/email/article/${a.id}`}
-                          className="text-xs text-teal hover:underline"
-                        >
-                          Email
-                        </Link>
-                      )}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-brown-light text-xs">{formatDate(a.createdAt)}</span>
+                        {emailEnabled && (
+                          <Link
+                            to={`/email/article/${a.articleId}`}
+                            className="text-xs text-teal hover:underline"
+                          >
+                            Email
+                          </Link>
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>

@@ -77,6 +77,12 @@ export class ConversionService {
       createdAt,
       size: epubBytes.byteLength,
     });
+    await this.epubs.addCachedArticle({
+      cacheKey,
+      title: article.title,
+      createdAt,
+      size: epubBytes.byteLength,
+    });
     logger.info({ title: article.title, size: epubBytes.byteLength }, "Subscription article converted and cached");
     return cacheKey;
   }

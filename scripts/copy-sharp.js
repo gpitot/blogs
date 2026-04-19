@@ -3,7 +3,7 @@ const { join } = require('path');
 
 const buildDir = join(__dirname, '..', '.aws-sam', 'build');
 const nodeModules = join(__dirname, '..', 'node_modules');
-const functions = ['ApiFunction', 'WeeklyFunction'];
+const functions = ['ApiFunction', 'WeeklyFunction', 'ConvertArticleFunction'];
 
 for (const fn of functions) {
   const dest = join(buildDir, fn, 'node_modules');

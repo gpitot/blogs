@@ -23,7 +23,7 @@ async function runWeeklyJob(): Promise<void> {
   const articles = (
     await Promise.all(
       subs.map(async (sub) => {
-        const latest = sub.convertedArticles[0];
+        const latest = sub.convertedArticles?.[0];
         if (!latest) return null;
         const article = await articleRepo.get(latest.articleId);
         if (!article) {
