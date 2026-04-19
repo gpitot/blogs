@@ -43,7 +43,7 @@ function makeSub(overrides?: Partial<Subscription>): Subscription {
     addedAt: Date.now(),
     lastChecked: null,
     seenGuids: [],
-    recentArticles: [],
+    convertedArticles: [],
     ...overrides,
   };
 }

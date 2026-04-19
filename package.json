@@ -5,6 +5,7 @@
   "scripts": {
     "build": "npm install --os=linux --cpu=arm64 sharp && sam build && node scripts/copy-sharp.js",
     "deploy": "npm run build && sam deploy --profile personal-development --no-confirm-changeset",
+    "sync": "npm run build && sam sync --stack-name blogs --profile personal-development --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
@@ -12,9 +13,11 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3",
     "@aws-sdk/client-s3": "^3",
+    "@aws-sdk/client-sqs": "^3.1031.0",
     "@aws-sdk/client-ssm": "^3",
     "@aws-sdk/lib-dynamodb": "^3",
     "@mozilla/readability": "^0.6.0",
+    "@types/aws-lambda": "^8.10.161",
     "dom-serializer": "^3.0.0",
     "fflate": "^0.8.2",
     "hono": "^4.12.9",

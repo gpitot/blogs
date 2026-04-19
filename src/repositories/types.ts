@@ -10,8 +10,9 @@ export interface AwsEnv {
 // Data types
 // ---------------------------------------------------------------------------
 
-export interface RecentArticle {
-  id: string;
+export interface ConvertedArticle {
+  cacheKey: string;
+  articleId: string;
   title: string;
   createdAt: number;
 }
@@ -24,7 +25,7 @@ export interface Subscription {
   addedAt: number;
   lastChecked: number | null;
   seenGuids: string[];
-  recentArticles: RecentArticle[];
+  convertedArticles: ConvertedArticle[];
 }
 
 export interface PendingArticle {
@@ -92,4 +93,4 @@ export interface EpubRepo {
 }
 
 export const MAX_SEEN_GUIDS = 200;
-export const MAX_RECENT_ARTICLES = 20;
+export const MAX_CONVERTED_ARTICLES = 20;

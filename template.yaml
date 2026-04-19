@@ -35,11 +35,26 @@ Globals:
         PROXY_URL: !Ref ProxyUrl
         SSM_RESEND_API_KEY_PARAM: /blogs/resend-api-key
         SSM_PROXY_SECRET_PARAM: /blogs/proxy-secret
+        FETCH_POSTS_QUEUE_URL: !Ref FetchPostsQueue
+        CONVERT_ARTICLE_QUEUE_URL: !Ref ConvertArticleQueue
 
 # ---------------------------------------------------------------------------
 # Resources
 # ---------------------------------------------------------------------------
 Resources:
+
+  # ── SQS Queues ────────────────────────────────────────────────────────────
+  FetchPostsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 86400  # 1 day
+
+  ConvertArticleQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 86400  # 1 day
 
   # ── DynamoDB ───────────────────────────────────────────────────────────────
   BlogEpubTable:
@@ -108,6 +123,9 @@ Resources:
             - Effect: Allow
               Action: kms:Decrypt
               Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt FetchPostsQueue.Arn
       FunctionUrlConfig:
         AuthType: NONE
 
@@ -151,6 +169,128 @@ Resources:
             RetryPolicy:
               MaximumRetryAttempts: 1
 
+  # ── Daily cron Lambda ─────────────────────────────────────────────────────
+  DailyFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/daily.ts
+        External:
+          - '@aws-sdk/*'
+          - sharp
+    Properties:
+      Handler: daily.handler
+      Timeout: 60
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref BlogEpubTable
+        - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt FetchPostsQueue.Arn
+      Events:
+        DailyCron:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: 'cron(0 6 * * ? *)'
+            Description: 'Trigger post fetching for all subscriptions daily at 6am UTC'
+            RetryPolicy:
+              MaximumRetryAttempts: 1
+
+  # ── Fetch posts Lambda ────────────────────────────────────────────────────
+  FetchPostsFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/fetch-posts.ts
+        External:
+          - '@aws-sdk/*'
+          - sharp
+    Properties:
+      Handler: fetch-posts.handler
+      Timeout: 300
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlogEpubTable
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/blogs/resend-api-key'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/blogs/proxy-secret'
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt ConvertArticleQueue.Arn
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt FetchPostsQueue.Arn
+      Events:
+        FetchPostsQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt FetchPostsQueue.Arn
+            BatchSize: 1
+
+  # ── Convert article Lambda ────────────────────────────────────────────────
+  ConvertArticleFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - src/convert-article.ts
+        External:
+          - '@aws-sdk/*'
+          - sharp
+    Properties:
+      Handler: convert-article.handler
+      Timeout: 300
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlogEpubTable
+        - S3CrudPolicy:
+            BucketName: !Ref EpubBucket
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/blogs/resend-api-key'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/blogs/proxy-secret'
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt ConvertArticleQueue.Arn
+      Events:
+        ConvertArticleQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ConvertArticleQueue.Arn
+            BatchSize: 1
+
 # ---------------------------------------------------------------------------
 # Outputs
 # ---------------------------------------------------------------------------
@@ -166,3 +306,11 @@ Outputs:
   BucketName:
     Description: 'S3 bucket for EPUB storage'
     Value: !Ref EpubBucket
+
+  FetchPostsQueueUrl:
+    Description: 'SQS queue URL for fetch-posts events'
+    Value: !Ref FetchPostsQueue
+
+  ConvertArticleQueueUrl:
+    Description: 'SQS queue URL for convert-article events'
+    Value: !Ref ConvertArticleQueue

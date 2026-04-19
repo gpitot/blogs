@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { handle } from "hono/aws-lambda";
 import { cors } from "hono/cors";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import type { AwsEnv } from "./repositories/types.ts";
 import {
   DynamoSubscriptionRepo,
@@ -17,6 +18,8 @@ import { sendEpubEmail, isEmailAllowed } from "./services/email.service.ts";
 import { createLogger } from "./logger.ts";
 import { proxiedFetch } from "./http/proxied-fetch.ts";
 import { loadSecrets } from "./secrets.ts";
+
+const sqsClient = new SQSClient({ region: process.env.AWS_REGION ?? "us-east-1" });
 
 const logger = createLogger("api");
 
@@ -60,7 +63,9 @@ export function createServices(e: AwsEnv) {
 
 const app = new Hono();
 
-app.use("*", cors({ origin: "https://blog-dl.pages.dev" }));
+app.use("*", cors({
+  origin: ["https://blog-dl.pages.dev", "http://localhost:5173"],
+}));
 
 app.use("*", async (_c, next) => {
   await ensureSecrets();
@@ -293,6 +298,14 @@ app.post("/subscriptions", async (c) => {
   const result = await blogs.subscribe(siteUrl);
   if ("error" in result) {
     return c.json({ error: result.error }, 400);
+  }
+
+  const fetchPostsQueueUrl = process.env.FETCH_POSTS_QUEUE_URL;
+  if (fetchPostsQueueUrl) {
+    await sqsClient.send(new SendMessageCommand({
+      QueueUrl: fetchPostsQueueUrl,
+      MessageBody: JSON.stringify({ subscriptionId: result.subscription.id }),
+    }));
   }
 
   return c.json(
