@@ -70,6 +70,7 @@ const app = new Hono<{ Variables: AppVariables }>();
 
 app.use("*", cors({
   origin: ["https://blog-dl.pages.dev", "http://localhost:5173"],
+  credentials: true,
 }));
 
 app.use("*", async (_c, next) => {
@@ -162,7 +163,7 @@ app.post("/login", async (c) => {
 
   setCookie(c, AUTH_COOKIE, user.apiKey, {
     httpOnly: true,
-    sameSite: "Strict",
+    sameSite: "None",
     secure: true,
     path: "/",
     maxAge: 60 * 60 * 24 * 30, // 30 days

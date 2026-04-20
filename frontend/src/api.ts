@@ -2,8 +2,24 @@ import type { CachedArticleMeta, Subscription, WeeklyBookMeta } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
 
+type UnauthorizedHandler = () => void;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+export function onUnauthorized(handler: UnauthorizedHandler) {
+  unauthorizedHandler = handler;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, options);
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    credentials: "include",
+  });
+
+  if (res.status === 401) {
+    unauthorizedHandler?.();
+    throw new Error("Unauthorized");
+  }
+
   const data = await res.json();
   if (!res.ok) {
     throw new Error((data as { error?: string }).error ?? `Request failed: ${res.status}`);
@@ -56,6 +72,26 @@ export function sendEpub(email: string, epubType: string, epubId: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, epub_type: epubType, epub_id: epubId }),
   });
+}
+
+export function register(name: string, email: string, password: string) {
+  return request<{ message: string }>("/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, email, password }),
+  });
+}
+
+export function login(email: string, password: string) {
+  return request<{ message: string }>("/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function logout() {
+  return request<{ message: string }>("/logout", { method: "POST" });
 }
 
 /** Returns the full URL to a backend download path. */
