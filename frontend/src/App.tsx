@@ -25,7 +25,10 @@ function AppInner() {
   useEffect(() => {
     onUnauthorized(() => {
       setAuthState("unauthenticated");
-      navigate("/login");
+      const path = window.location.pathname;
+      if (path !== "/login" && path !== "/register") {
+        navigate("/login");
+      }
     });
     getHome()
       .then(() => setAuthState("authenticated"))
