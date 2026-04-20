@@ -17,6 +17,7 @@ export class BlogsService {
   ) {}
 
   async subscribe(
+    userId: string,
     url: string,
   ): Promise<{ subscription: Subscription } | { error: string }> {
     logger.info({ url }, "Detecting feed URL");
@@ -29,7 +30,7 @@ export class BlogsService {
       };
     }
 
-    const existing = await this.subs.list();
+    const existing = await this.subs.listForUser(userId);
     if (existing.some((s) => s.feedUrl === feedUrl)) {
       return { error: "You are already subscribed to this feed." };
     }
@@ -46,6 +47,7 @@ export class BlogsService {
 
     const sub: Subscription = {
       id: generateId(),
+      userId,
       feedUrl,
       siteUrl: url,
       title: feed.title || url,
@@ -65,8 +67,8 @@ export class BlogsService {
     await this.subs.delete(id);
   }
 
-  async listSubscriptions(): Promise<Subscription[]> {
-    const subs = await this.subs.list();
+  async listSubscriptions(userId: string): Promise<Subscription[]> {
+    const subs = await this.subs.listForUser(userId);
     return subs.sort((a, b) => b.addedAt - a.addedAt);
   }
 
@@ -90,5 +92,4 @@ export class BlogsService {
     logger.debug({ sub: sub.title, newItems: newItems.length }, "Checked feed for new posts");
     return newItems;
   }
-
 }

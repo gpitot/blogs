@@ -23,7 +23,7 @@ export const handler = async (): Promise<void> => {
     subs.map((sub) =>
       sqsClient.send(new SendMessageCommand({
         QueueUrl: fetchPostsQueueUrl,
-        MessageBody: JSON.stringify({ subscriptionId: sub.id }),
+        MessageBody: JSON.stringify({ subscriptionId: sub.id, userId: sub.userId }),
       })).catch((err) => logger.error({ err, sub: sub.title }, "Failed to enqueue subscription")),
     ),
   );

@@ -7,6 +7,7 @@ import type { FeedItem } from "../../services/rss.ts";
 function mockSubRepo(): SubscriptionRepo {
   return {
     list: vi.fn().mockResolvedValue([]),
+    listForUser: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
     put: vi.fn().mockResolvedValue(undefined),
     delete: vi.fn().mockResolvedValue(undefined),
@@ -37,6 +38,7 @@ function makeFeedItems(count: number): FeedItem[] {
 function makeSub(overrides?: Partial<Subscription>): Subscription {
   return {
     id: "sub1",
+    userId: "user1",
     feedUrl: "https://example.com/feed",
     siteUrl: "https://example.com",
     title: "Test Blog",
@@ -63,7 +65,7 @@ describe("BlogsService", () => {
     it("returns error when feed not found", async () => {
       (feed.detectFeedUrl as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
-      const result = await service.subscribe("https://example.com");
+      const result = await service.subscribe("user1", "https://example.com");
 
       expect(result).toHaveProperty("error");
       expect((result as { error: string }).error).toContain(
@@ -77,7 +79,7 @@ describe("BlogsService", () => {
         new Error("Network error"),
       );
 
-      const result = await service.subscribe("https://example.com");
+      const result = await service.subscribe("user1", "https://example.com");
 
       expect(result).toHaveProperty("error");
       expect((result as { error: string }).error).toContain("Network error");
@@ -90,7 +92,7 @@ describe("BlogsService", () => {
         items,
       });
 
-      const result = await service.subscribe("https://example.com");
+      const result = await service.subscribe("user1", "https://example.com");
 
       expect(result).toHaveProperty("subscription");
       const sub = (result as { subscription: Subscription }).subscription;
@@ -113,7 +115,7 @@ describe("BlogsService", () => {
         items,
       });
 
-      const result = await service.subscribe("https://example.com");
+      const result = await service.subscribe("user1", "https://example.com");
 
       const sub = (result as { subscription: Subscription }).subscription;
       expect(sub.seenGuids).toHaveLength(0);
@@ -129,11 +131,11 @@ describe("BlogsService", () => {
   });
 
   describe("listSubscriptions", () => {
-    it("delegates to repo.list", async () => {
+    it("delegates to repo.listForUser", async () => {
       const subs = [makeSub()];
-      (repo.list as ReturnType<typeof vi.fn>).mockResolvedValue(subs);
+      (repo.listForUser as ReturnType<typeof vi.fn>).mockResolvedValue(subs);
 
-      const result = await service.listSubscriptions();
+      const result = await service.listSubscriptions("user1");
       expect(result).toEqual(subs);
     });
   });
