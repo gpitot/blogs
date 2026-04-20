@@ -15,6 +15,7 @@ export interface User {
   name: string;
   email: string;
   apiKey: string;
+  passwordHash: string;
   approved: boolean;
   createdAt: number;
 }

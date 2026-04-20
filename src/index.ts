@@ -16,11 +16,13 @@ import { detectFeedUrl, fetchAndParseFeed } from "./services/rss.ts";
 import { processArticleImages } from "./services/images.ts";
 import { urlToKey } from "./utils.ts";
 import { sendEpubEmail } from "./services/email.service.ts";
+import { hashPassword, verifyPassword } from "./services/password.ts";
 import { createLogger } from "./logger.ts";
 import { proxiedFetch } from "./http/proxied-fetch.ts";
 import { loadSecrets } from "./secrets.ts";
-import { createAuthMiddleware } from "./middleware/auth.ts";
+import { createAuthMiddleware, AUTH_COOKIE } from "./middleware/auth.ts";
 import type { AppVariables } from "./types/context.ts";
+import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
 const sqsClient = new SQSClient({ region: process.env.AWS_REGION ?? "us-east-1" });
 
@@ -75,12 +77,14 @@ app.use("*", async (_c, next) => {
   await next();
 });
 
-// Auth middleware — exempt only POST /register
+// Auth middleware — exempt public auth routes
 const userRepo = new DynamoUserRepo(env);
 const authMiddleware = createAuthMiddleware(userRepo);
 
+const PUBLIC_ROUTES = new Set(["/register", "/login", "/logout"]);
+
 app.use("*", async (c, next) => {
-  if (c.req.method === "POST" && c.req.path === "/register") return next();
+  if (PUBLIC_ROUTES.has(c.req.path)) return next();
   return authMiddleware(c, next);
 });
 
@@ -89,7 +93,7 @@ app.use("*", async (c, next) => {
 // ---------------------------------------------------------------------------
 
 app.post("/register", async (c) => {
-  let body: { name?: string; email?: string };
+  let body: { name?: string; email?: string; password?: string };
   try {
     body = await c.req.json();
   } catch {
@@ -98,22 +102,27 @@ app.post("/register", async (c) => {
 
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const password = typeof body.password === "string" ? body.password : "";
 
   if (!name) return c.json({ error: "Please provide a name." }, 400);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return c.json({ error: "Please provide a valid email address." }, 400);
   }
+  if (password.length < 8) return c.json({ error: "Password must be at least 8 characters." }, 400);
 
   const existing = await userRepo.getByEmail(email);
   if (existing) {
     return c.json({ error: "That email address is already registered." }, 409);
   }
 
+  const passwordHash = await hashPassword(password);
+
   const user = {
     id: crypto.randomUUID(),
     name,
     email,
     apiKey: crypto.randomUUID(),
+    passwordHash,
     approved: false,
     createdAt: Date.now(),
   };
@@ -122,6 +131,50 @@ app.post("/register", async (c) => {
   logger.info({ email }, "User registered, added to waitlist");
 
   return c.json({ message: "You have been added to the waitlist. You will be notified when your account is approved." }, 201);
+});
+
+app.post("/login", async (c) => {
+  let body: { email?: string; password?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid request body." }, 400);
+  }
+
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+
+  if (!email || !password) {
+    return c.json({ error: "Email and password are required." }, 400);
+  }
+
+  const user = await userRepo.getByEmail(email);
+  // Use constant-time comparison path even when user not found to avoid timing attacks
+  const passwordOk = user ? await verifyPassword(password, user.passwordHash) : false;
+
+  if (!user || !passwordOk) {
+    return c.json({ error: "Invalid email or password." }, 401);
+  }
+
+  if (!user.approved) {
+    return c.json({ error: "Your account is pending approval." }, 403);
+  }
+
+  setCookie(c, AUTH_COOKIE, user.apiKey, {
+    httpOnly: true,
+    sameSite: "Strict",
+    secure: true,
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30, // 30 days
+  });
+
+  logger.info({ email }, "User logged in");
+  return c.json({ message: "Logged in successfully." });
+});
+
+app.post("/logout", (c) => {
+  deleteCookie(c, AUTH_COOKIE, { path: "/" });
+  return c.json({ message: "Logged out." });
 });
 
 // ---------------------------------------------------------------------------
