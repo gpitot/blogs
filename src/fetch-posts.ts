@@ -25,8 +25,9 @@ export const handler: SQSHandler = async (event) => {
 
   for (const record of event.Records) {
     let subscriptionId: string;
+    let userId: string;
     try {
-      ({ subscriptionId } = JSON.parse(record.body) as { subscriptionId: string });
+      ({ subscriptionId, userId } = JSON.parse(record.body) as { subscriptionId: string; userId: string });
     } catch {
       logger.error({ body: record.body }, "Failed to parse SQS message");
       continue;
@@ -45,7 +46,7 @@ export const handler: SQSHandler = async (event) => {
       for (const item of newItems) {
         await sqsClient.send(new SendMessageCommand({
           QueueUrl: convertQueueUrl,
-          MessageBody: JSON.stringify({ feedItem: item, subId: sub.id, subTitle: sub.title }),
+          MessageBody: JSON.stringify({ feedItem: item, subId: sub.id, userId: sub.userId, subTitle: sub.title }),
         }));
       }
     } catch (err) {

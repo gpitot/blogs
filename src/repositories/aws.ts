@@ -11,11 +11,14 @@ import {
 } from "@aws-sdk/client-s3";
 import type {
   AwsEnv,
+  User,
+  GlobalSubEntry,
   Subscription,
   PendingArticle,
   CacheEntry,
   WeeklyBookMeta,
   CachedArticleMeta,
+  UserRepo,
   SubscriptionRepo,
   ArticleRepo,
   EpubRepo,
@@ -92,8 +95,15 @@ export class DynamoSubscriptionRepo implements SubscriptionRepo {
   }
 
   async list(): Promise<Subscription[]> {
-    const ids = await this.listIds();
-    const subs = await Promise.all(ids.map((id) => this.get(id)));
+    const entries = await this.listEntries();
+    const subs = await Promise.all(entries.map((e) => this.get(e.subId)));
+    return subs.filter(Boolean) as Subscription[];
+  }
+
+  async listForUser(userId: string): Promise<Subscription[]> {
+    const entries = await this.listEntries();
+    const userEntries = entries.filter((e) => e.userId === userId);
+    const subs = await Promise.all(userEntries.map((e) => this.get(e.subId)));
     return subs.filter(Boolean) as Subscription[];
   }
 
@@ -103,23 +113,65 @@ export class DynamoSubscriptionRepo implements SubscriptionRepo {
 
   async put(sub: Subscription): Promise<void> {
     await dbPut(this.doc, this.table, `SUB#${sub.id}`, "#ITEM", sub);
-    const ids = await this.listIds();
-    if (!ids.includes(sub.id)) {
-      await dbPut(this.doc, this.table, INDEX_PK, SUBS_SK, [...ids, sub.id]);
+    const entries = await this.listEntries();
+    if (!entries.some((e) => e.subId === sub.id)) {
+      await dbPut(this.doc, this.table, INDEX_PK, SUBS_SK, [
+        ...entries,
+        { userId: sub.userId, subId: sub.id },
+      ]);
     }
   }
 
   async delete(id: string): Promise<void> {
-    // Mark the sub item as deleted by overwriting with a tombstone
-    // (DynamoDB DeleteItem would require the full key — simpler to just remove from index)
     const { DeleteCommand } = await import("@aws-sdk/lib-dynamodb");
     await this.doc.send(new DeleteCommand({ TableName: this.table, Key: { pk: `SUB#${id}`, sk: "#ITEM" } }));
-    const ids = await this.listIds();
-    await dbPut(this.doc, this.table, INDEX_PK, SUBS_SK, ids.filter((i) => i !== id));
+    const entries = await this.listEntries();
+    await dbPut(this.doc, this.table, INDEX_PK, SUBS_SK, entries.filter((e) => e.subId !== id));
   }
 
-  private async listIds(): Promise<string[]> {
-    return (await dbGet<string[]>(this.doc, this.table, INDEX_PK, SUBS_SK)) ?? [];
+  private async listEntries(): Promise<GlobalSubEntry[]> {
+    const raw = await dbGet<GlobalSubEntry[] | string[]>(this.doc, this.table, INDEX_PK, SUBS_SK);
+    if (!raw) return [];
+    // Handle legacy format: string[] of subIds (no userId)
+    if (typeof raw[0] === "string") {
+      return (raw as string[]).map((subId) => ({ userId: "", subId }));
+    }
+    return raw as GlobalSubEntry[];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// User repository
+// ---------------------------------------------------------------------------
+
+export class DynamoUserRepo implements UserRepo {
+  private doc: DynamoDBDocumentClient;
+  private table: string;
+
+  constructor(env: AwsEnv) {
+    const { doc, table } = makeDocClient(env);
+    this.doc = doc;
+    this.table = table;
+  }
+
+  async create(user: User): Promise<void> {
+    await Promise.all([
+      dbPut(this.doc, this.table, `USER#${user.id}`, "#ITEM", user),
+      dbPut(this.doc, this.table, `USER_BY_EMAIL#${user.email.toLowerCase()}`, "#ITEM", { userId: user.id }),
+      dbPut(this.doc, this.table, `USER_BY_APIKEY#${user.apiKey}`, "#ITEM", { userId: user.id }),
+    ]);
+  }
+
+  async getByEmail(email: string): Promise<User | null> {
+    const ref = await dbGet<{ userId: string }>(this.doc, this.table, `USER_BY_EMAIL#${email.toLowerCase()}`, "#ITEM");
+    if (!ref) return null;
+    return dbGet<User>(this.doc, this.table, `USER#${ref.userId}`, "#ITEM");
+  }
+
+  async getByApiKey(apiKey: string): Promise<User | null> {
+    const ref = await dbGet<{ userId: string }>(this.doc, this.table, `USER_BY_APIKEY#${apiKey}`, "#ITEM");
+    if (!ref) return null;
+    return dbGet<User>(this.doc, this.table, `USER#${ref.userId}`, "#ITEM");
   }
 }
 

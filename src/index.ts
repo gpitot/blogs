@@ -7,6 +7,7 @@ import {
   DynamoSubscriptionRepo,
   DynamoArticleRepo,
   DynamoS3EpubRepo,
+  DynamoUserRepo,
 } from "./repositories/aws.ts";
 import { BlogsService } from "./services/blogs.service.ts";
 import { PostsService } from "./services/posts.service.ts";
@@ -14,10 +15,14 @@ import { ConversionService } from "./services/conversion.service.ts";
 import { detectFeedUrl, fetchAndParseFeed } from "./services/rss.ts";
 import { processArticleImages } from "./services/images.ts";
 import { urlToKey } from "./utils.ts";
-import { sendEpubEmail, isEmailAllowed } from "./services/email.service.ts";
+import { sendEpubEmail } from "./services/email.service.ts";
+import { hashPassword, verifyPassword } from "./services/password.ts";
 import { createLogger } from "./logger.ts";
 import { proxiedFetch } from "./http/proxied-fetch.ts";
 import { loadSecrets } from "./secrets.ts";
+import { createAuthMiddleware, AUTH_COOKIE } from "./middleware/auth.ts";
+import type { AppVariables } from "./types/context.ts";
+import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
 const sqsClient = new SQSClient({ region: process.env.AWS_REGION ?? "us-east-1" });
 
@@ -61,15 +66,116 @@ export function createServices(e: AwsEnv) {
   };
 }
 
-const app = new Hono();
+const app = new Hono<{ Variables: AppVariables }>();
 
 app.use("*", cors({
   origin: ["https://blog-dl.pages.dev", "http://localhost:5173"],
+  credentials: true,
 }));
 
 app.use("*", async (_c, next) => {
   await ensureSecrets();
   await next();
+});
+
+// Auth middleware — exempt public auth routes
+const userRepo = new DynamoUserRepo(env);
+const authMiddleware = createAuthMiddleware(userRepo);
+
+const PUBLIC_ROUTES = new Set(["/register", "/login", "/logout"]);
+
+app.use("*", async (c, next) => {
+  if (PUBLIC_ROUTES.has(c.req.path)) return next();
+  return authMiddleware(c, next);
+});
+
+// ---------------------------------------------------------------------------
+// Registration (public)
+// ---------------------------------------------------------------------------
+
+app.post("/register", async (c) => {
+  let body: { name?: string; email?: string; password?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid request body." }, 400);
+  }
+
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+
+  if (!name) return c.json({ error: "Please provide a name." }, 400);
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return c.json({ error: "Please provide a valid email address." }, 400);
+  }
+  if (password.length < 8) return c.json({ error: "Password must be at least 8 characters." }, 400);
+
+  const existing = await userRepo.getByEmail(email);
+  if (existing) {
+    return c.json({ error: "That email address is already registered." }, 409);
+  }
+
+  const passwordHash = await hashPassword(password);
+
+  const user = {
+    id: crypto.randomUUID(),
+    name,
+    email,
+    apiKey: crypto.randomUUID(),
+    passwordHash,
+    approved: false,
+    createdAt: Date.now(),
+  };
+
+  await userRepo.create(user);
+  logger.info({ email }, "User registered, added to waitlist");
+
+  return c.json({ message: "You have been added to the waitlist. You will be notified when your account is approved." }, 201);
+});
+
+app.post("/login", async (c) => {
+  let body: { email?: string; password?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid request body." }, 400);
+  }
+
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+
+  if (!email || !password) {
+    return c.json({ error: "Email and password are required." }, 400);
+  }
+
+  const user = await userRepo.getByEmail(email);
+  // Use constant-time comparison path even when user not found to avoid timing attacks
+  const passwordOk = user ? await verifyPassword(password, user.passwordHash) : false;
+
+  if (!user || !passwordOk) {
+    return c.json({ error: "Invalid email or password." }, 401);
+  }
+
+  if (!user.approved) {
+    return c.json({ error: "Your account is pending approval." }, 403);
+  }
+
+  setCookie(c, AUTH_COOKIE, user.apiKey, {
+    httpOnly: true,
+    sameSite: "None",
+    secure: true,
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30, // 30 days
+  });
+
+  logger.info({ email }, "User logged in");
+  return c.json({ message: "Logged in successfully." });
+});
+
+app.post("/logout", (c) => {
+  deleteCookie(c, AUTH_COOKIE, { path: "/" });
+  return c.json({ message: "Logged out." });
 });
 
 // ---------------------------------------------------------------------------
@@ -110,9 +216,6 @@ app.post("/convert", async (c) => {
 
   if (body.email && typeof body.email === "string" && body.email.trim()) {
     emailAddress = body.email.trim();
-    if (!isEmailAllowed(emailAddress, env.EMAIL_ALLOWLIST)) {
-      return c.json({ error: "That email address is not on the allow list." }, 400);
-    }
   }
 
   const { conversion } = createServices(env);
@@ -264,8 +367,9 @@ app.get("/download/article/:id", async (c) => {
 // ---------------------------------------------------------------------------
 
 app.get("/subscriptions", async (c) => {
+  const user = c.get("user");
   const { blogs } = createServices(env);
-  const subscriptions = await blogs.listSubscriptions();
+  const subscriptions = await blogs.listSubscriptions(user.id);
   return c.json({ subscriptions, emailEnabled: !!env.RESEND_API_KEY });
 });
 
@@ -278,6 +382,7 @@ app.post("/subscriptions", async (c) => {
   }
 
   const raw = body.url;
+  const user = c.get("user");
   const { blogs } = createServices(env);
 
   if (!raw || typeof raw !== "string") {
@@ -295,7 +400,7 @@ app.post("/subscriptions", async (c) => {
     return c.json({ error: "Invalid URL." }, 400);
   }
 
-  const result = await blogs.subscribe(siteUrl);
+  const result = await blogs.subscribe(user.id, siteUrl);
   if ("error" in result) {
     return c.json({ error: result.error }, 400);
   }
@@ -304,7 +409,7 @@ app.post("/subscriptions", async (c) => {
   if (fetchPostsQueueUrl) {
     await sqsClient.send(new SendMessageCommand({
       QueueUrl: fetchPostsQueueUrl,
-      MessageBody: JSON.stringify({ subscriptionId: result.subscription.id }),
+      MessageBody: JSON.stringify({ subscriptionId: result.subscription.id, userId: user.id }),
     }));
   }
 
@@ -317,6 +422,14 @@ app.post("/subscriptions", async (c) => {
 app.post("/subscriptions/:id/delete", async (c) => {
   const id = c.req.param("id");
   if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
+
+  const user = c.get("user");
+  const subsRepo = new DynamoSubscriptionRepo(env);
+  const sub = await subsRepo.get(id);
+
+  if (!sub) return c.json({ error: "Subscription not found." }, 404);
+  if (sub.userId !== user.id) return c.json({ error: "Forbidden." }, 403);
+
   const { blogs } = createServices(env);
   await blogs.unsubscribe(id);
   return c.json({ success: true });
@@ -410,10 +523,6 @@ app.post("/send-epub", async (c) => {
 
   if (!env.RESEND_API_KEY) {
     return c.json({ error: "Email delivery is not configured." }, 503);
-  }
-
-  if (!isEmailAllowed(email, env.EMAIL_ALLOWLIST)) {
-    return c.json({ error: "That email address is not on the allow list." }, 403);
   }
 
   const { conversion, posts } = createServices(env);

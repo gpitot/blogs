@@ -7,6 +7,25 @@ export interface AwsEnv {
 }
 
 // ---------------------------------------------------------------------------
+// User types
+// ---------------------------------------------------------------------------
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  apiKey: string;
+  passwordHash: string;
+  approved: boolean;
+  createdAt: number;
+}
+
+export interface GlobalSubEntry {
+  userId: string;
+  subId: string;
+}
+
+// ---------------------------------------------------------------------------
 // Data types
 // ---------------------------------------------------------------------------
 
@@ -19,6 +38,7 @@ export interface ConvertedArticle {
 
 export interface Subscription {
   id: string;
+  userId: string;
   feedUrl: string;
   siteUrl: string;
   title: string;
@@ -68,9 +88,16 @@ export interface CachedArticleMeta {
 
 export interface SubscriptionRepo {
   list(): Promise<Subscription[]>;
+  listForUser(userId: string): Promise<Subscription[]>;
   get(id: string): Promise<Subscription | null>;
   put(sub: Subscription): Promise<void>;
   delete(id: string): Promise<void>;
+}
+
+export interface UserRepo {
+  getByApiKey(apiKey: string): Promise<User | null>;
+  getByEmail(email: string): Promise<User | null>;
+  create(user: User): Promise<void>;
 }
 
 export interface ArticleRepo {
