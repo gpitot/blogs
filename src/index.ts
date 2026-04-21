@@ -4,7 +4,8 @@ import { cors } from "hono/cors";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import type { AwsEnv } from "./repositories/types.ts";
 import {
-  DynamoSubscriptionRepo,
+  DynamoFeedRepo,
+  DynamoUserSubscriptionRepo,
   DynamoArticleRepo,
   DynamoS3EpubRepo,
   DynamoUserRepo,
@@ -22,7 +23,7 @@ import { proxiedFetch } from "./http/proxied-fetch.ts";
 import { loadSecrets } from "./secrets.ts";
 import { createAuthMiddleware, AUTH_COOKIE } from "./middleware/auth.ts";
 import type { AppVariables } from "./types/context.ts";
-import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { setCookie, deleteCookie } from "hono/cookie";
 
 const sqsClient = new SQSClient({
   region: process.env.AWS_REGION ?? "us-east-1",
@@ -54,8 +55,10 @@ function defaultFetchHtml(url: string): Promise<string | null> {
 }
 
 export function createServices(e: AwsEnv) {
+  const feedRepo = new DynamoFeedRepo(e);
+  const userSubRepo = new DynamoUserSubscriptionRepo(e);
   return {
-    blogs: new BlogsService(new DynamoSubscriptionRepo(e), {
+    blogs: new BlogsService(feedRepo, userSubRepo, {
       detectFeedUrl,
       fetchAndParseFeed,
     }),
@@ -65,6 +68,8 @@ export function createServices(e: AwsEnv) {
     conversion: new ConversionService(new DynamoS3EpubRepo(e), {
       processArticleImages,
     }),
+    feedRepo,
+    userSubRepo,
   };
 }
 
@@ -164,7 +169,6 @@ app.post("/login", async (c) => {
   }
 
   const user = await userRepo.getByEmail(email);
-  // Use constant-time comparison path even when user not found to avoid timing attacks
   const passwordOk = user
     ? await verifyPassword(password, user.passwordHash)
     : false;
@@ -182,7 +186,7 @@ app.post("/login", async (c) => {
     sameSite: "None",
     secure: true,
     path: "/",
-    maxAge: 60 * 60 * 24 * 30, // 30 days
+    maxAge: 60 * 60 * 24 * 30,
   });
 
   logger.info({ email }, "User logged in");
@@ -366,17 +370,17 @@ app.post("/subscriptions", async (c) => {
     return c.json({ error: result.error }, 400);
   }
 
-  const fetchPostsQueueUrl = process.env.FETCH_POSTS_QUEUE_URL;
-  if (fetchPostsQueueUrl) {
-    await sqsClient.send(
-      new SendMessageCommand({
-        QueueUrl: fetchPostsQueueUrl,
-        MessageBody: JSON.stringify({
-          subscriptionId: result.subscription.id,
-          userId: user.id,
+  // Only trigger fetch if this is a new feed (no articles yet)
+  if (result.subscription.convertedArticles.length === 0) {
+    const fetchPostsQueueUrl = process.env.FETCH_POSTS_QUEUE_URL;
+    if (fetchPostsQueueUrl) {
+      await sqsClient.send(
+        new SendMessageCommand({
+          QueueUrl: fetchPostsQueueUrl,
+          MessageBody: JSON.stringify({ feedId: result.subscription.feedId }),
         }),
-      }),
-    );
+      );
+    }
   }
 
   return c.json(
@@ -388,19 +392,17 @@ app.post("/subscriptions", async (c) => {
   );
 });
 
-app.post("/subscriptions/:id/delete", async (c) => {
-  const id = c.req.param("id");
-  if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
+app.post("/subscriptions/:feedId/delete", async (c) => {
+  const feedId = c.req.param("feedId");
+  if (!/^[a-f0-9]+$/.test(feedId)) return c.notFound();
 
   const user = c.get("user");
-  const subsRepo = new DynamoSubscriptionRepo(env);
-  const sub = await subsRepo.get(id);
+  const { blogs, userSubRepo } = createServices(env);
 
-  if (!sub) return c.json({ error: "Subscription not found." }, 404);
-  if (sub.userId !== user.id) return c.json({ error: "Forbidden." }, 403);
+  const isSubscribed = await userSubRepo.isSubscribed(user.id, feedId);
+  if (!isSubscribed) return c.json({ error: "Subscription not found." }, 404);
 
-  const { blogs } = createServices(env);
-  await blogs.unsubscribe(id);
+  await blogs.unsubscribe(user.id, feedId);
   return c.json({ success: true });
 });
 

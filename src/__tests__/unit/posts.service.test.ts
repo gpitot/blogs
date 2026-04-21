@@ -166,8 +166,8 @@ describe("PostsService", () => {
       const result = await service.fetchAndSave(item, "sub1", "Test Blog");
 
       expect(result).not.toBeNull();
-      expect(result!.subId).toBe("sub1");
-      expect(result!.subTitle).toBe("Test Blog");
+      expect(result!.feedId).toBe("sub1");
+      expect(result!.feedTitle).toBe("Test Blog");
       expect(result!.title).toBe("My Great Post");
       expect(result!.id).toMatch(/^[a-f0-9]{16}$/);
     });
@@ -182,8 +182,8 @@ describe("PostsService", () => {
         byline: "Author",
         content: "<p>content</p>",
         savedAt: Date.now(),
-        subId: "sub1",
-        subTitle: "Blog",
+        feedId: "sub1",
+        feedTitle: "Blog",
       };
       (repo.get as ReturnType<typeof vi.fn>).mockResolvedValue(article);
 

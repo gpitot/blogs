@@ -1,6 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
+  DeleteCommand,
   GetCommand,
   PutCommand,
   QueryCommand,
@@ -14,14 +15,16 @@ import {
 import type {
   AwsEnv,
   User,
-  Subscription,
+  Feed,
+  UserSubscription,
   PopularSubscription,
   PendingArticle,
   CacheEntry,
   WeeklyBookMeta,
   CachedArticleMeta,
+  FeedRepo,
+  UserSubscriptionRepo,
   UserRepo,
-  SubscriptionRepo,
   ArticleRepo,
   EpubRepo,
 } from "./types.ts";
@@ -34,6 +37,8 @@ const INDEX_PK = "INDEX";
 const POPULAR_SUBS_SK = "POPULAR_SUBS";
 const WEEKLY_BOOKS_SK = "WEEKLY_BOOKS";
 const CACHED_ARTICLES_SK = "CACHED_ARTICLES";
+
+const GSI_SK = "sk-index";
 
 const MAX_WEEKLY_BOOKS = 8;
 const MAX_CACHED_ARTICLES = 20;
@@ -83,12 +88,10 @@ async function dbPut(
 }
 
 // ---------------------------------------------------------------------------
-// Subscription repository
+// Feed repository
 // ---------------------------------------------------------------------------
 
-const GSI_USER_ID = "userId-index";
-
-export class DynamoSubscriptionRepo implements SubscriptionRepo {
+export class DynamoFeedRepo implements FeedRepo {
   private doc: DynamoDBDocumentClient;
   private table: string;
 
@@ -98,47 +101,29 @@ export class DynamoSubscriptionRepo implements SubscriptionRepo {
     this.table = table;
   }
 
-  async list(): Promise<Subscription[]> {
+  async get(id: string): Promise<Feed | null> {
+    return dbGet<Feed>(this.doc, this.table, `FEED#${id}`, "#ITEM");
+  }
+
+  async getByUrl(feedUrl: string): Promise<Feed | null> {
+    const { feedUrlToId } = await import("../utils.ts");
+    const id = await feedUrlToId(feedUrl);
+    return this.get(id);
+  }
+
+  async put(feed: Feed): Promise<void> {
+    await dbPut(this.doc, this.table, `FEED#${feed.id}`, "#ITEM", feed);
+  }
+
+  async list(): Promise<Feed[]> {
     const res = await this.doc.send(new ScanCommand({
       TableName: this.table,
-      IndexName: GSI_USER_ID,
-      FilterExpression: "begins_with(pk, :prefix)",
-      ExpressionAttributeValues: { ":prefix": "SUB#" },
+      FilterExpression: "begins_with(pk, :prefix) AND sk = :sk",
+      ExpressionAttributeValues: { ":prefix": "FEED#", ":sk": "#ITEM" },
     }));
     return (res.Items ?? [])
-      .map((item) => { try { return JSON.parse(item.data as string) as Subscription; } catch { return null; } })
-      .filter(Boolean) as Subscription[];
-  }
-
-  async listForUser(userId: string): Promise<Subscription[]> {
-    const res = await this.doc.send(new QueryCommand({
-      TableName: this.table,
-      IndexName: GSI_USER_ID,
-      KeyConditionExpression: "userId = :uid AND begins_with(pk, :prefix)",
-      ExpressionAttributeValues: { ":uid": userId, ":prefix": "SUB#" },
-    }));
-    return (res.Items ?? [])
-      .map((item) => { try { return JSON.parse(item.data as string) as Subscription; } catch { return null; } })
-      .filter(Boolean) as Subscription[];
-  }
-
-  async get(id: string): Promise<Subscription | null> {
-    return dbGet<Subscription>(this.doc, this.table, `SUB#${id}`, "#ITEM");
-  }
-
-  async put(sub: Subscription): Promise<void> {
-    const item: Record<string, unknown> = {
-      pk: `SUB#${sub.id}`,
-      sk: "#ITEM",
-      data: JSON.stringify(sub),
-      userId: sub.userId,
-    };
-    await this.doc.send(new PutCommand({ TableName: this.table, Item: item }));
-  }
-
-  async delete(id: string): Promise<void> {
-    const { DeleteCommand } = await import("@aws-sdk/lib-dynamodb");
-    await this.doc.send(new DeleteCommand({ TableName: this.table, Key: { pk: `SUB#${id}`, sk: "#ITEM" } }));
+      .map((item) => { try { return JSON.parse(item.data as string) as Feed; } catch { return null; } })
+      .filter(Boolean) as Feed[];
   }
 
   async getPopular(): Promise<PopularSubscription[]> {
@@ -166,6 +151,64 @@ export class DynamoSubscriptionRepo implements SubscriptionRepo {
       existing.subscriberCount = Math.max(0, existing.subscriberCount - 1);
       await dbPut(this.doc, this.table, INDEX_PK, POPULAR_SUBS_SK, list);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// User subscription repository (join table)
+// ---------------------------------------------------------------------------
+
+export class DynamoUserSubscriptionRepo implements UserSubscriptionRepo {
+  private doc: DynamoDBDocumentClient;
+  private table: string;
+
+  constructor(env: AwsEnv) {
+    const { doc, table } = makeDocClient(env);
+    this.doc = doc;
+    this.table = table;
+  }
+
+  async listForUser(userId: string): Promise<UserSubscription[]> {
+    const res = await this.doc.send(new QueryCommand({
+      TableName: this.table,
+      KeyConditionExpression: "pk = :pk",
+      ExpressionAttributeValues: { ":pk": `USER_SUB#${userId}` },
+    }));
+    return (res.Items ?? [])
+      .map((item) => { try { return JSON.parse(item.data as string) as UserSubscription; } catch { return null; } })
+      .filter(Boolean) as UserSubscription[];
+  }
+
+  async subscribe(userId: string, feedId: string): Promise<void> {
+    const sub: UserSubscription = { userId, feedId, addedAt: Date.now() };
+    await dbPut(this.doc, this.table, `USER_SUB#${userId}`, `FEED#${feedId}`, sub);
+  }
+
+  async unsubscribe(userId: string, feedId: string): Promise<void> {
+    await this.doc.send(new DeleteCommand({
+      TableName: this.table,
+      Key: { pk: `USER_SUB#${userId}`, sk: `FEED#${feedId}` },
+    }));
+  }
+
+  async isSubscribed(userId: string, feedId: string): Promise<boolean> {
+    const res = await this.doc.send(new GetCommand({
+      TableName: this.table,
+      Key: { pk: `USER_SUB#${userId}`, sk: `FEED#${feedId}` },
+    }));
+    return !!res.Item;
+  }
+
+  async getSubscriberUserIds(feedId: string): Promise<string[]> {
+    const res = await this.doc.send(new QueryCommand({
+      TableName: this.table,
+      IndexName: GSI_SK,
+      KeyConditionExpression: "sk = :sk",
+      ExpressionAttributeValues: { ":sk": `FEED#${feedId}` },
+    }));
+    return (res.Items ?? [])
+      .map((item) => (item.pk as string).replace("USER_SUB#", ""))
+      .filter(Boolean);
   }
 }
 
@@ -274,7 +317,6 @@ export class DynamoS3EpubRepo implements EpubRepo {
   }
 
   async putEpubData(kvKey: string, data: Uint8Array, _ttlSeconds: number): Promise<void> {
-    // kvKey format: "epub-data:{hex}" or "weekly-book-data:{weekKey}"
     const s3Key = this.kvKeyToS3Key(kvKey);
     await this.s3.send(
       new PutObjectCommand({
@@ -306,10 +348,7 @@ export class DynamoS3EpubRepo implements EpubRepo {
   }
 
   async addWeeklyBook(userId: string, meta: WeeklyBookMeta, data: Uint8Array): Promise<void> {
-    // Store binary in S3
     await this.putEpubData(meta.kvKey, data, WEEKLY_BOOK_TTL_SECS);
-
-    // Update index in DynamoDB
     const books = await this.listWeeklyBooks(userId);
     const updated = [meta, ...books.filter((b) => b.weekKey !== meta.weekKey)].slice(
       0,
@@ -346,7 +385,6 @@ export class DynamoS3EpubRepo implements EpubRepo {
     await dbPut(this.doc, this.table, INDEX_PK, `${CACHED_ARTICLES_SK}#${userId}`, updated);
   }
 
-  // Map existing kvKey naming conventions to S3 keys
   private kvKeyToS3Key(kvKey: string): string {
     if (kvKey.startsWith("epub-data:")) {
       return `epub/${kvKey.replace("epub-data:", "")}`;

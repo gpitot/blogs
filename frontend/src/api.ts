@@ -65,8 +65,8 @@ export function subscribe(url: string) {
   });
 }
 
-export function deleteSubscription(id: string) {
-  return request<{ success: boolean }>(`/subscriptions/${id}/delete`, { method: "POST" });
+export function deleteSubscription(feedId: string) {
+  return request<{ success: boolean }>(`/subscriptions/${feedId}/delete`, { method: "POST" });
 }
 
 export function getWeeklyBooks() {

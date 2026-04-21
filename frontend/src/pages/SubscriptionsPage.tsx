@@ -30,6 +30,7 @@ export default function SubscriptionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [sending, setSending] = useState<string | null>(null);
+  const [addingFeed, setAddingFeed] = useState<string | null>(null);
 
   useEffect(() => {
     getSubscriptions().then((data) => {
@@ -58,10 +59,26 @@ export default function SubscriptionsPage() {
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleAddPopular(feedUrl: string) {
+    setError(null);
+    setSuccess(null);
+    setAddingFeed(feedUrl);
+    try {
+      const data = await subscribe(feedUrl);
+      setSuccess(data.message);
+      const updated = await getSubscriptions();
+      setSubs(updated.subscriptions);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAddingFeed(null);
+    }
+  }
+
+  async function handleDelete(feedId: string) {
     if (!confirm("Remove this subscription?")) return;
-    await deleteSubscription(id);
-    setSubs((prev) => prev.filter((s) => s.id !== id));
+    await deleteSubscription(feedId);
+    setSubs((prev) => prev.filter((s) => s.feedId !== feedId));
   }
 
   async function handleResend(articleId: string) {
@@ -130,7 +147,7 @@ export default function SubscriptionsPage() {
         <ul className="space-y-3">
           {subs.map((sub) => (
             <li
-              key={sub.id}
+              key={sub.feedId}
               className="border border-tan rounded-sm p-4 bg-cream shadow-[1px_1px_4px_rgba(0,0,0,0.05)]"
             >
               <div className="flex justify-between items-start gap-2">
@@ -152,7 +169,7 @@ export default function SubscriptionsPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => handleDelete(sub.id)}
+                  onClick={() => handleDelete(sub.feedId)}
                   className="shrink-0 px-2.5 py-1 bg-rose-bg border border-rose-border text-rose-text text-xs font-semibold rounded-sm hover:bg-rose-text hover:text-cream cursor-pointer"
                 >
                   Remove
@@ -213,10 +230,11 @@ export default function SubscriptionsPage() {
                 </div>
                 {!subs.some((s) => s.feedUrl === p.feedUrl) && (
                   <button
-                    onClick={() => { setUrl(p.siteUrl); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                    className="px-3 py-1 bg-teal text-cream text-xs font-semibold rounded-sm hover:bg-teal-dark cursor-pointer uppercase tracking-wide shrink-0"
+                    onClick={() => handleAddPopular(p.feedUrl)}
+                    disabled={addingFeed === p.feedUrl}
+                    className="px-3 py-1 bg-teal text-cream text-xs font-semibold rounded-sm hover:bg-teal-dark cursor-pointer uppercase tracking-wide shrink-0 disabled:opacity-50"
                   >
-                    Add
+                    {addingFeed === p.feedUrl ? "Adding\u2026" : "Add"}
                   </button>
                 )}
               </li>

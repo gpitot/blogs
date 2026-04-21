@@ -67,22 +67,20 @@ Resources:
           AttributeType: S
         - AttributeName: sk
           AttributeType: S
-        - AttributeName: userId
-          AttributeType: S
       KeySchema:
         - AttributeName: pk
           KeyType: HASH
         - AttributeName: sk
           KeyType: RANGE
       GlobalSecondaryIndexes:
-        - IndexName: userId-index
+        - IndexName: sk-index
           KeySchema:
-            - AttributeName: userId
+            - AttributeName: sk
               KeyType: HASH
             - AttributeName: pk
               KeyType: RANGE
           Projection:
-            ProjectionType: ALL
+            ProjectionType: KEYS_ONLY
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true

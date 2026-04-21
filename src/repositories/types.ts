@@ -21,7 +21,7 @@ export interface User {
 }
 
 // ---------------------------------------------------------------------------
-// Data types
+// Feed & subscription types
 // ---------------------------------------------------------------------------
 
 export interface ConvertedArticle {
@@ -31,17 +31,32 @@ export interface ConvertedArticle {
   createdAt: number;
 }
 
-export interface Subscription {
+export interface Feed {
   id: string;
-  userId: string;
   feedUrl: string;
   siteUrl: string;
   title: string;
-  addedAt: number;
   lastChecked: number | null;
   seenGuids: string[];
   convertedArticles: ConvertedArticle[];
 }
+
+export interface UserSubscription {
+  userId: string;
+  feedId: string;
+  addedAt: number;
+}
+
+export interface PopularSubscription {
+  feedUrl: string;
+  siteUrl: string;
+  title: string;
+  subscriberCount: number;
+}
+
+// ---------------------------------------------------------------------------
+// Article types
+// ---------------------------------------------------------------------------
 
 export interface PendingArticle {
   id: string;
@@ -50,8 +65,8 @@ export interface PendingArticle {
   byline: string;
   content: string;
   savedAt: number;
-  subId: string;
-  subTitle: string;
+  feedId: string;
+  feedTitle: string;
 }
 
 export interface CacheEntry {
@@ -78,26 +93,26 @@ export interface CachedArticleMeta {
   size: number;
 }
 
-export interface PopularSubscription {
-  feedUrl: string;
-  siteUrl: string;
-  title: string;
-  subscriberCount: number;
-}
-
 // ---------------------------------------------------------------------------
 // Repository interfaces
 // ---------------------------------------------------------------------------
 
-export interface SubscriptionRepo {
-  list(): Promise<Subscription[]>;
-  listForUser(userId: string): Promise<Subscription[]>;
-  get(id: string): Promise<Subscription | null>;
-  put(sub: Subscription): Promise<void>;
-  delete(id: string): Promise<void>;
+export interface FeedRepo {
+  get(id: string): Promise<Feed | null>;
+  getByUrl(feedUrl: string): Promise<Feed | null>;
+  put(feed: Feed): Promise<void>;
+  list(): Promise<Feed[]>;
   getPopular(): Promise<PopularSubscription[]>;
   incrementPopular(feedUrl: string, siteUrl: string, title: string): Promise<void>;
   decrementPopular(feedUrl: string): Promise<void>;
+}
+
+export interface UserSubscriptionRepo {
+  listForUser(userId: string): Promise<UserSubscription[]>;
+  subscribe(userId: string, feedId: string): Promise<void>;
+  unsubscribe(userId: string, feedId: string): Promise<void>;
+  isSubscribed(userId: string, feedId: string): Promise<boolean>;
+  getSubscriberUserIds(feedId: string): Promise<string[]>;
 }
 
 export interface UserRepo {

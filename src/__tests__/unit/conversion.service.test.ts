@@ -12,6 +12,8 @@ function mockEpubRepo(): EpubRepo {
     listWeeklyBooks: vi.fn().mockResolvedValue([]),
     addWeeklyBook: vi.fn().mockResolvedValue(undefined),
     getWeeklyBookData: vi.fn().mockResolvedValue(null),
+    listCachedArticles: vi.fn().mockResolvedValue([]),
+    addCachedArticle: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -32,8 +34,8 @@ function makeArticle(overrides?: Partial<PendingArticle>): PendingArticle {
     byline: "Test Author",
     content: "<p>Article content</p>",
     savedAt: Date.now(),
-    subId: "sub1",
-    subTitle: "Test Blog",
+    feedId: "sub1",
+    feedTitle: "Test Blog",
     ...overrides,
   };
 }
@@ -69,6 +71,7 @@ describe("ConversionService", () => {
       const result = await service.convertSingleArticle(
         "https://example.com/post",
         ARTICLE_HTML,
+        "user1",
       );
 
       expect(result.cacheKey).toMatch(/^epub:[a-f0-9]+$/);
@@ -84,6 +87,7 @@ describe("ConversionService", () => {
       const result = await service.convertSingleArticle(
         "https://example.com/post",
         ARTICLE_HTML,
+        "user1",
       );
 
       // EPUB is a ZIP file, so it starts with PK (0x50, 0x4B)
@@ -108,18 +112,18 @@ describe("ConversionService", () => {
 
   describe("compileWeeklyBook", () => {
     it("returns null for empty articles array", async () => {
-      const result = await service.compileWeeklyBook([]);
+      const result = await service.compileWeeklyBook([], "user1");
       expect(result).toBeNull();
       expect(repo.addWeeklyBook).not.toHaveBeenCalled();
     });
 
     it("produces multi-chapter EPUB and stores it", async () => {
       const articles = [
-        makeArticle({ id: "a1", title: "Article 1", subTitle: "Blog A" }),
-        makeArticle({ id: "a2", title: "Article 2", subTitle: "Blog B" }),
+        makeArticle({ id: "a1", title: "Article 1", feedTitle: "Blog A" }),
+        makeArticle({ id: "a2", title: "Article 2", feedTitle: "Blog B" }),
       ];
 
-      const result = await service.compileWeeklyBook(articles);
+      const result = await service.compileWeeklyBook(articles, "user1");
 
       expect(result).not.toBeNull();
       expect(result!.articleCount).toBe(2);
@@ -127,8 +131,8 @@ describe("ConversionService", () => {
       expect(result!.weekKey).toMatch(/^\d{4}-W\d{2}$/);
       expect(repo.addWeeklyBook).toHaveBeenCalled();
 
-      // Check the stored EPUB data
-      const [meta, data] = (repo.addWeeklyBook as ReturnType<typeof vi.fn>).mock.calls[0];
+      // Check the stored EPUB data — addWeeklyBook(userId, meta, data)
+      const [, meta, data] = (repo.addWeeklyBook as ReturnType<typeof vi.fn>).mock.calls[0];
       expect(meta.articleCount).toBe(2);
       expect(data).toBeInstanceOf(Uint8Array);
     });
@@ -143,7 +147,7 @@ describe("ConversionService", () => {
         makeArticle({ id: "a2", title: "Works Fine" }),
       ];
 
-      const result = await service.compileWeeklyBook(articles);
+      const result = await service.compileWeeklyBook(articles, "user1");
 
       expect(result).not.toBeNull();
       expect(result!.articleCount).toBe(2);
@@ -169,7 +173,7 @@ describe("ConversionService", () => {
         makeArticle({ id: "a2" }),
       ];
 
-      await service.compileWeeklyBook(articles);
+      await service.compileWeeklyBook(articles, "user1");
 
       // Second call should have startIndex = 2 (after first article's 2 images)
       expect(processMock).toHaveBeenNthCalledWith(
@@ -210,7 +214,7 @@ describe("ConversionService", () => {
       ];
       (repo.listWeeklyBooks as ReturnType<typeof vi.fn>).mockResolvedValue(books);
 
-      const result = await service.listWeeklyBooks();
+      const result = await service.listWeeklyBooks("user1");
       expect(result).toEqual(books);
     });
   });

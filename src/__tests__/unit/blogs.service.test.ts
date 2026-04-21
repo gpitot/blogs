@@ -1,16 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { BlogsService } from "../../services/blogs.service.ts";
-import type { SubscriptionRepo, Subscription } from "../../repositories/types.ts";
+import type { FeedRepo, UserSubscriptionRepo, Feed } from "../../repositories/types.ts";
 import type { FeedClient } from "../../services/interfaces.ts";
 import type { FeedItem } from "../../services/rss.ts";
 
-function mockSubRepo(): SubscriptionRepo {
+function mockFeedRepo(): FeedRepo {
   return {
-    list: vi.fn().mockResolvedValue([]),
-    listForUser: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(null),
+    getByUrl: vi.fn().mockResolvedValue(null),
     put: vi.fn().mockResolvedValue(undefined),
-    delete: vi.fn().mockResolvedValue(undefined),
+    list: vi.fn().mockResolvedValue([]),
+    getPopular: vi.fn().mockResolvedValue([]),
+    incrementPopular: vi.fn().mockResolvedValue(undefined),
+    decrementPopular: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function mockUserSubRepo(): UserSubscriptionRepo {
+  return {
+    listForUser: vi.fn().mockResolvedValue([]),
+    subscribe: vi.fn().mockResolvedValue(undefined),
+    unsubscribe: vi.fn().mockResolvedValue(undefined),
+    isSubscribed: vi.fn().mockResolvedValue(false),
+    getSubscriberUserIds: vi.fn().mockResolvedValue([]),
   };
 }
 
@@ -35,14 +47,12 @@ function makeFeedItems(count: number): FeedItem[] {
   }));
 }
 
-function makeSub(overrides?: Partial<Subscription>): Subscription {
+function makeFeed(overrides?: Partial<Feed>): Feed {
   return {
-    id: "sub1",
-    userId: "user1",
+    id: "feedhash1",
     feedUrl: "https://example.com/feed",
     siteUrl: "https://example.com",
     title: "Test Blog",
-    addedAt: Date.now(),
     lastChecked: null,
     seenGuids: [],
     convertedArticles: [],
@@ -51,19 +61,21 @@ function makeSub(overrides?: Partial<Subscription>): Subscription {
 }
 
 describe("BlogsService", () => {
-  let repo: SubscriptionRepo;
-  let feed: FeedClient;
+  let feedRepo: FeedRepo;
+  let userSubRepo: UserSubscriptionRepo;
+  let feedClient: FeedClient;
   let service: BlogsService;
 
   beforeEach(() => {
-    repo = mockSubRepo();
-    feed = mockFeedClient();
-    service = new BlogsService(repo, feed);
+    feedRepo = mockFeedRepo();
+    userSubRepo = mockUserSubRepo();
+    feedClient = mockFeedClient();
+    service = new BlogsService(feedRepo, userSubRepo, feedClient);
   });
 
   describe("subscribe", () => {
     it("returns error when feed not found", async () => {
-      (feed.detectFeedUrl as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (feedClient.detectFeedUrl as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
       const result = await service.subscribe("user1", "https://example.com");
 
@@ -71,11 +83,11 @@ describe("BlogsService", () => {
       expect((result as { error: string }).error).toContain(
         "Could not find an RSS or Atom feed",
       );
-      expect(repo.put).not.toHaveBeenCalled();
+      expect(feedRepo.put).not.toHaveBeenCalled();
     });
 
     it("returns error when feed parsing fails", async () => {
-      (feed.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockRejectedValue(
+      (feedClient.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error("Network error"),
       );
 
@@ -85,73 +97,77 @@ describe("BlogsService", () => {
       expect((result as { error: string }).error).toContain("Network error");
     });
 
-    it("creates subscription with correct seenGuids — marks all but latest 5 as seen", async () => {
-      const items = makeFeedItems(10);
-      (feed.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
-        title: "Test Blog",
-        items,
-      });
-
+    it("creates feed and user subscription for new feed", async () => {
       const result = await service.subscribe("user1", "https://example.com");
 
       expect(result).toHaveProperty("subscription");
-      const sub = (result as { subscription: Subscription }).subscription;
-
-      // Latest 5 (guid-0..guid-4) should NOT be in seenGuids
-      // Older 5 (guid-5..guid-9) should be in seenGuids
-      expect(sub.seenGuids).toHaveLength(5);
-      expect(sub.seenGuids).toContain("guid-5");
-      expect(sub.seenGuids).toContain("guid-9");
-      expect(sub.seenGuids).not.toContain("guid-0");
-      expect(sub.seenGuids).not.toContain("guid-4");
-
-      expect(repo.put).toHaveBeenCalledWith(sub);
+      expect(feedRepo.put).toHaveBeenCalled();
+      expect(userSubRepo.subscribe).toHaveBeenCalled();
+      expect(feedRepo.incrementPopular).toHaveBeenCalled();
     });
 
-    it("creates subscription with empty seenGuids when fewer than 5 items", async () => {
-      const items = makeFeedItems(3);
-      (feed.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
-        title: "Small Blog",
-        items,
-      });
+    it("reuses existing feed when already present", async () => {
+      const existingFeed = makeFeed({ convertedArticles: [{ cacheKey: "k", articleId: "a1", title: "Old Post", createdAt: 123 }] });
+      (feedRepo.get as ReturnType<typeof vi.fn>).mockResolvedValue(existingFeed);
+
+      const result = await service.subscribe("user2", "https://example.com");
+
+      expect(result).toHaveProperty("subscription");
+      // Should not re-create the feed
+      expect(feedRepo.put).not.toHaveBeenCalled();
+      expect(feedClient.fetchAndParseFeed).not.toHaveBeenCalled();
+      expect(userSubRepo.subscribe).toHaveBeenCalled();
+    });
+
+    it("returns error when already subscribed", async () => {
+      (userSubRepo.isSubscribed as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
       const result = await service.subscribe("user1", "https://example.com");
 
-      const sub = (result as { subscription: Subscription }).subscription;
-      expect(sub.seenGuids).toHaveLength(0);
-      expect(sub.title).toBe("Small Blog");
+      expect(result).toHaveProperty("error");
+      expect((result as { error: string }).error).toContain("already subscribed");
     });
   });
 
   describe("unsubscribe", () => {
-    it("delegates to repo.delete", async () => {
-      await service.unsubscribe("sub1");
-      expect(repo.delete).toHaveBeenCalledWith("sub1");
+    it("removes user subscription and decrements popular", async () => {
+      const feed = makeFeed();
+      (feedRepo.get as ReturnType<typeof vi.fn>).mockResolvedValue(feed);
+
+      await service.unsubscribe("user1", "feedhash1");
+
+      expect(userSubRepo.unsubscribe).toHaveBeenCalledWith("user1", "feedhash1");
+      expect(feedRepo.decrementPopular).toHaveBeenCalledWith(feed.feedUrl);
     });
   });
 
   describe("listSubscriptions", () => {
-    it("delegates to repo.listForUser", async () => {
-      const subs = [makeSub()];
-      (repo.listForUser as ReturnType<typeof vi.fn>).mockResolvedValue(subs);
+    it("joins user subscriptions with feed data", async () => {
+      const feed = makeFeed();
+      (userSubRepo.listForUser as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { userId: "user1", feedId: "feedhash1", addedAt: 1000 },
+      ]);
+      (feedRepo.get as ReturnType<typeof vi.fn>).mockResolvedValue(feed);
 
       const result = await service.listSubscriptions("user1");
-      expect(result).toEqual(subs);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].feedId).toBe("feedhash1");
+      expect(result[0].title).toBe("Test Blog");
     });
   });
 
   describe("checkForNewPosts", () => {
     it("returns only unseen items", async () => {
-      const sub = makeSub({ seenGuids: ["guid-0", "guid-1"] });
+      const feed = makeFeed({ seenGuids: ["guid-0", "guid-1"] });
       const items = makeFeedItems(5);
-      (feed.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (feedClient.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
         title: "Test Blog",
         items,
       });
 
-      const newItems = await service.checkForNewPosts(sub);
+      const newItems = await service.checkForNewPosts(feed);
 
-      // guid-0 and guid-1 are seen, so only guid-2, guid-3, guid-4 are new
       expect(newItems).toHaveLength(3);
       expect(newItems.map((i) => i.guid)).toEqual([
         "guid-2",
@@ -161,29 +177,29 @@ describe("BlogsService", () => {
     });
 
     it("returns at most 5 items", async () => {
-      const sub = makeSub();
+      const feed = makeFeed();
       const items = makeFeedItems(10);
-      (feed.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (feedClient.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
         title: "Test Blog",
         items,
       });
 
-      const newItems = await service.checkForNewPosts(sub);
+      const newItems = await service.checkForNewPosts(feed);
       expect(newItems.length).toBeLessThanOrEqual(5);
     });
 
-    it("updates seenGuids and lastChecked on the subscription", async () => {
-      const sub = makeSub({ seenGuids: ["old-guid"] });
+    it("updates seenGuids and lastChecked on the feed", async () => {
+      const feed = makeFeed({ seenGuids: ["old-guid"] });
       const items = makeFeedItems(2);
-      (feed.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (feedClient.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
         title: "Test Blog",
         items,
       });
 
-      await service.checkForNewPosts(sub);
+      await service.checkForNewPosts(feed);
 
-      expect(repo.put).toHaveBeenCalled();
-      const saved = (repo.put as ReturnType<typeof vi.fn>).mock.calls[0][0] as Subscription;
+      expect(feedRepo.put).toHaveBeenCalled();
+      const saved = (feedRepo.put as ReturnType<typeof vi.fn>).mock.calls[0][0] as Feed;
       expect(saved.lastChecked).toBeGreaterThan(0);
       expect(saved.seenGuids).toContain("guid-0");
       expect(saved.seenGuids).toContain("guid-1");
@@ -191,16 +207,16 @@ describe("BlogsService", () => {
     });
 
     it("returns empty array when all items are seen", async () => {
-      const sub = makeSub({
+      const feed = makeFeed({
         seenGuids: ["guid-0", "guid-1", "guid-2"],
       });
       const items = makeFeedItems(3);
-      (feed.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
+      (feedClient.fetchAndParseFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
         title: "Test Blog",
         items,
       });
 
-      const newItems = await service.checkForNewPosts(sub);
+      const newItems = await service.checkForNewPosts(feed);
       expect(newItems).toHaveLength(0);
     });
   });

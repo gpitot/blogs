@@ -142,7 +142,7 @@ export class ConversionService {
           );
         allImages.push(...images);
         chapters.push({
-          title: `${article.subTitle}: ${article.title}`,
+          title: `${article.feedTitle}: ${article.title}`,
           byline: article.byline || "Unknown Author",
           content: contentWithImages,
         });
@@ -152,7 +152,7 @@ export class ConversionService {
           "Image processing failed for article, using raw content",
         );
         chapters.push({
-          title: `${article.subTitle}: ${article.title}`,
+          title: `${article.feedTitle}: ${article.title}`,
           byline: article.byline || "Unknown Author",
           content: article.content,
         });
@@ -184,6 +184,22 @@ export class ConversionService {
     );
 
     return meta;
+  }
+
+  async addCachedArticleForUser(
+    userId: string,
+    article: PendingArticle,
+    cacheKey: string,
+  ): Promise<void> {
+    const meta = await this.epubs.getCachedMeta(cacheKey);
+    if (!meta) return;
+    await this.epubs.addCachedArticle(userId, {
+      cacheKey,
+      title: article.title,
+      url: article.url,
+      createdAt: Date.now(),
+      size: meta.size,
+    });
   }
 
   async getCachedConversion(cacheKey: string): Promise<CacheEntry | null> {

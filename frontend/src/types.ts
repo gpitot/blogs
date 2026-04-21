@@ -6,13 +6,12 @@ export interface ConvertedArticle {
 }
 
 export interface Subscription {
-  id: string;
+  feedId: string;
   feedUrl: string;
   siteUrl: string;
   title: string;
   addedAt: number;
   lastChecked: number | null;
-  seenGuids: string[];
   convertedArticles: ConvertedArticle[];
 }
 

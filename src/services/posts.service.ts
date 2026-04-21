@@ -19,8 +19,8 @@ export class PostsService {
 
   async fetchAndSave(
     item: FeedItem,
-    subId: string,
-    subTitle: string,
+    feedId: string,
+    feedTitle: string,
   ): Promise<PendingArticle | null> {
     let article: { title: string; content: string; byline: string } | null =
       null;
@@ -85,12 +85,12 @@ export class PostsService {
       byline: article.byline || "Unknown Author",
       content: article.content,
       savedAt: Date.now(),
-      subId,
-      subTitle,
+      feedId,
+      feedTitle,
     };
 
     await this.articles.put(pending);
-    logger.info({ title: pending.title, url: pending.url, subTitle }, "Article fetched and saved");
+    logger.info({ title: pending.title, url: pending.url, feedTitle }, "Article fetched and saved");
     return pending;
   }
 

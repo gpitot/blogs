@@ -1,7 +1,7 @@
 import type { SQSHandler } from "aws-lambda";
 import type { AwsEnv } from "./repositories/types.ts";
 import { MAX_CONVERTED_ARTICLES } from "./repositories/types.ts";
-import { DynamoSubscriptionRepo, DynamoArticleRepo, DynamoS3EpubRepo } from "./repositories/aws.ts";
+import { DynamoFeedRepo, DynamoUserSubscriptionRepo, DynamoArticleRepo, DynamoS3EpubRepo } from "./repositories/aws.ts";
 import { PostsService } from "./services/posts.service.ts";
 import { ConversionService } from "./services/conversion.service.ts";
 import { processArticleImages } from "./services/images.ts";
@@ -26,21 +26,20 @@ function defaultFetchHtml(url: string): Promise<string | null> {
 export const handler: SQSHandler = async (event) => {
   await loadSecrets();
 
-  const subsRepo = new DynamoSubscriptionRepo(env);
+  const feedRepo = new DynamoFeedRepo(env);
+  const userSubRepo = new DynamoUserSubscriptionRepo(env);
   const posts = new PostsService(new DynamoArticleRepo(env), { fetch: defaultFetchHtml });
   const conversion = new ConversionService(new DynamoS3EpubRepo(env), { processArticleImages });
 
   for (const record of event.Records) {
     let feedItem: FeedItem;
-    let subId: string;
-    let subTitle: string;
-    let userId: string;
+    let feedId: string;
+    let feedTitle: string;
     try {
-      ({ feedItem, subId, subTitle, userId } = JSON.parse(record.body) as {
+      ({ feedItem, feedId, feedTitle } = JSON.parse(record.body) as {
         feedItem: FeedItem;
-        subId: string;
-        subTitle: string;
-        userId: string;
+        feedId: string;
+        feedTitle: string;
       });
     } catch {
       logger.error({ body: record.body }, "Failed to parse SQS message");
@@ -48,24 +47,35 @@ export const handler: SQSHandler = async (event) => {
     }
 
     try {
-      const article = await posts.fetchAndSave(feedItem, subId, subTitle);
+      const article = await posts.fetchAndSave(feedItem, feedId, feedTitle);
       if (!article) {
         logger.warn({ title: feedItem.title }, "No content extracted, skipping");
         continue;
       }
 
-      const cacheKey = await conversion.convertAndCacheSubscriptionArticle(article, userId);
+      const subscriberIds = await userSubRepo.getSubscriberUserIds(feedId);
+      if (subscriberIds.length === 0) {
+        logger.warn({ feedId }, "No subscribers for feed, skipping cache");
+        continue;
+      }
 
-      const sub = await subsRepo.get(subId);
-      if (sub) {
+      const cacheKey = await conversion.convertAndCacheSubscriptionArticle(article, subscriberIds[0]);
+
+      // Add to all other subscribers' cached articles too
+      for (const userId of subscriberIds.slice(1)) {
+        await conversion.addCachedArticleForUser(userId, article, cacheKey);
+      }
+
+      const feed = await feedRepo.get(feedId);
+      if (feed) {
         const entry = { cacheKey, articleId: article.id, title: article.title, createdAt: article.savedAt };
-        await subsRepo.put({
-          ...sub,
-          convertedArticles: [entry, ...sub.convertedArticles].slice(0, MAX_CONVERTED_ARTICLES),
+        await feedRepo.put({
+          ...feed,
+          convertedArticles: [entry, ...feed.convertedArticles].slice(0, MAX_CONVERTED_ARTICLES),
         });
       }
 
-      logger.info({ title: article.title, subTitle }, "Article converted and linked to subscription");
+      logger.info({ title: article.title, feedTitle }, "Article converted and linked to feed");
     } catch (err) {
       logger.error({ err, title: feedItem.title }, "Failed to convert article");
     }

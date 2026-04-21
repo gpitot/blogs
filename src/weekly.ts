@@ -1,5 +1,5 @@
 import type { AwsEnv, PendingArticle } from "./repositories/types.ts";
-import { DynamoSubscriptionRepo, DynamoArticleRepo, DynamoS3EpubRepo, DynamoUserRepo } from "./repositories/aws.ts";
+import { DynamoFeedRepo, DynamoUserSubscriptionRepo, DynamoArticleRepo, DynamoS3EpubRepo, DynamoUserRepo } from "./repositories/aws.ts";
 import { ConversionService } from "./services/conversion.service.ts";
 import { sendEpubEmail } from "./services/email.service.ts";
 import { processArticleImages } from "./services/images.ts";
@@ -14,35 +14,46 @@ const env: AwsEnv = {
 };
 
 async function runWeeklyJob(): Promise<void> {
-  const subsRepo = new DynamoSubscriptionRepo(env);
+  const feedRepo = new DynamoFeedRepo(env);
+  const userSubRepo = new DynamoUserSubscriptionRepo(env);
   const articleRepo = new DynamoArticleRepo(env);
   const userRepo = new DynamoUserRepo(env);
   const epubRepo = new DynamoS3EpubRepo(env);
   const conversion = new ConversionService(epubRepo, { processArticleImages });
 
-  const subs = await subsRepo.list();
-  logger.info({ subCount: subs.length }, "Starting weekly book compilation");
+  const feeds = await feedRepo.list();
+  logger.info({ feedCount: feeds.length }, "Starting weekly book compilation");
 
-  const subsByUser = new Map<string, typeof subs>();
-  for (const sub of subs) {
-    if (!sub.userId) continue;
-    const list = subsByUser.get(sub.userId) ?? [];
-    list.push(sub);
-    subsByUser.set(sub.userId, list);
+  // Build a set of all user IDs that have subscriptions
+  const allUserIds = new Set<string>();
+  const feedsByUser = new Map<string, string[]>();
+
+  for (const feed of feeds) {
+    const subscriberIds = await userSubRepo.getSubscriberUserIds(feed.id);
+    for (const userId of subscriberIds) {
+      allUserIds.add(userId);
+      const list = feedsByUser.get(userId) ?? [];
+      list.push(feed.id);
+      feedsByUser.set(userId, list);
+    }
   }
 
+  const feedMap = new Map(feeds.map((f) => [f.id, f]));
   const resendApiKey = process.env.RESEND_API_KEY;
   const fromAddress = process.env.RESEND_FROM_ADDRESS ?? "";
 
-  for (const [userId, userSubs] of subsByUser) {
+  for (const userId of allUserIds) {
+    const userFeedIds = feedsByUser.get(userId) ?? [];
     const articles = (
       await Promise.all(
-        userSubs.map(async (sub) => {
-          const latest = sub.convertedArticles?.[0];
+        userFeedIds.map(async (feedId) => {
+          const feed = feedMap.get(feedId);
+          if (!feed) return null;
+          const latest = feed.convertedArticles?.[0];
           if (!latest) return null;
           const article = await articleRepo.get(latest.articleId);
           if (!article) {
-            logger.warn({ sub: sub.title, articleId: latest.articleId }, "Cached article not found, skipping");
+            logger.warn({ feed: feed.title, articleId: latest.articleId }, "Cached article not found, skipping");
             return null;
           }
           return article;
