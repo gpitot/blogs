@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { getSubscriptions, subscribe, deleteSubscription, downloadUrl } from "../api";
+import { getSubscriptions, subscribe, deleteSubscription, sendEpub } from "../api";
 import type { Subscription } from "../types";
 
 function formatDate(ms: number): string {
@@ -23,16 +23,15 @@ function formatRelative(ms: number): string {
 
 export default function SubscriptionsPage() {
   const [subs, setSubs] = useState<Subscription[]>([]);
-  const [emailEnabled, setEmailEnabled] = useState(false);
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [sending, setSending] = useState<string | null>(null);
 
   useEffect(() => {
     getSubscriptions().then((data) => {
       setSubs(data.subscriptions);
-      setEmailEnabled(data.emailEnabled);
     });
   }, []);
 
@@ -58,6 +57,17 @@ export default function SubscriptionsPage() {
     if (!confirm("Remove this subscription?")) return;
     await deleteSubscription(id);
     setSubs((prev) => prev.filter((s) => s.id !== id));
+  }
+
+  async function handleResend(articleId: string) {
+    setSending(articleId);
+    try {
+      await sendEpub("article", articleId);
+    } catch {
+      // ignore
+    } finally {
+      setSending(null);
+    }
   }
 
   return (
@@ -152,22 +162,16 @@ export default function SubscriptionsPage() {
                 <ul className="mt-2 divide-y divide-brown-light/20">
                   {(sub.convertedArticles ?? []).map((a) => (
                     <li key={a.articleId} className="py-1.5 first:pt-0">
-                      <a
-                        href={downloadUrl(`/download/article/${a.articleId}`)}
-                        className="text-sm text-teal hover:underline"
-                      >
-                        {a.title}
-                      </a>
+                      <span className="text-sm text-brown">{a.title}</span>
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className="text-brown-light text-xs">{formatDate(a.createdAt)}</span>
-                        {emailEnabled && (
-                          <Link
-                            to={`/email/article/${a.articleId}`}
-                            className="text-xs text-teal hover:underline"
-                          >
-                            Email
-                          </Link>
-                        )}
+                        <button
+                          onClick={() => handleResend(a.articleId)}
+                          disabled={sending === a.articleId}
+                          className="text-xs text-teal hover:underline cursor-pointer disabled:opacity-50"
+                        >
+                          {sending === a.articleId ? "Sending\u2026" : "Email"}
+                        </button>
                       </div>
                     </li>
                   ))}

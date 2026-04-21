@@ -1,7 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { getHome, convert, downloadUrl } from "../api";
-import KindleHelp from "../KindleHelp";
+import { getHome, convert, sendEpub } from "../api";
 import type { CachedArticleMeta } from "../types";
 
 function formatDate(ms: number): string {
@@ -13,21 +11,18 @@ function formatDate(ms: number): string {
 }
 
 export default function ConvertPage() {
-  const [emailEnabled, setEmailEnabled] = useState(false);
   const [cachedArticles, setCachedArticles] = useState<CachedArticleMeta[]>([]);
   const [url, setUrl] = useState("");
-  const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
-    downloadUrl: string;
-    downloadTitle: string;
-    emailSentTo?: string;
+    title: string;
+    emailSentTo: string;
   } | null>(null);
+  const [resending, setResending] = useState<string | null>(null);
 
   useEffect(() => {
     getHome().then((data) => {
-      setEmailEnabled(data.emailEnabled);
       setCachedArticles(data.cachedArticles);
     });
   }, []);
@@ -38,7 +33,7 @@ export default function ConvertPage() {
     setResult(null);
     setLoading(true);
     try {
-      const data = await convert(url, email || undefined);
+      const data = await convert(url);
       setResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -47,11 +42,23 @@ export default function ConvertPage() {
     }
   }
 
+  async function handleResend(cacheKey: string) {
+    const shortKey = cacheKey.replace("epub:", "");
+    setResending(shortKey);
+    try {
+      await sendEpub("cached", shortKey);
+    } catch {
+      // ignore
+    } finally {
+      setResending(null);
+    }
+  }
+
   return (
     <div>
       <h2 className="font-heading text-xl font-bold mb-1 text-brown">Convert Article</h2>
       <p className="text-brown-light text-sm mb-5">
-        Paste a blog post URL and download it as an EPUB for your e-reader.
+        Paste a blog post URL and receive it as an EPUB in your inbox.
       </p>
 
       <form onSubmit={handleSubmit}>
@@ -68,32 +75,12 @@ export default function ConvertPage() {
           autoComplete="off"
           className="w-full px-3 py-2 bg-parchment border border-tan rounded-sm text-sm text-brown shadow-[inset_1px_1px_3px_rgba(0,0,0,0.06)] focus:outline-none focus:ring-1 focus:ring-teal focus:border-teal"
         />
-        {emailEnabled && (
-          <>
-            <label className="block font-medium text-sm mt-3 mb-1" htmlFor="email">
-              Email address{" "}
-              <span className="font-normal text-brown-light italic">
-                (optional &ndash; receive EPUB in your inbox)
-              </span>
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              autoComplete="email"
-              className="w-full px-3 py-2 bg-parchment border border-tan rounded-sm text-sm text-brown shadow-[inset_1px_1px_3px_rgba(0,0,0,0.06)] focus:outline-none focus:ring-1 focus:ring-teal focus:border-teal"
-            />
-            <KindleHelp />
-          </>
-        )}
         <button
           type="submit"
           disabled={loading}
           className="mt-3 px-5 py-2 bg-teal text-cream text-sm font-semibold rounded-sm hover:bg-teal-dark disabled:opacity-50 cursor-pointer tracking-wide uppercase"
         >
-          {loading ? "Converting\u2026" : "Convert to EPUB"}
+          {loading ? "Converting\u2026" : "Convert & Send"}
         </button>
       </form>
 
@@ -105,19 +92,7 @@ export default function ConvertPage() {
 
       {result && (
         <div className="mt-4 p-3 bg-sage-bg border border-sage-border text-sage-text rounded-sm text-sm">
-          {result.emailSentTo ? (
-            <>
-              EPUB sent to <strong>{result.emailSentTo}</strong>.{" "}
-            </>
-          ) : (
-            "Your EPUB is ready: "
-          )}
-          <a
-            href={downloadUrl(result.downloadUrl)}
-            className="font-semibold underline hover:text-teal-dark"
-          >
-            {result.emailSentTo ? "Download directly" : result.downloadTitle}
-          </a>
+          <strong>{result.title}</strong> sent to <strong>{result.emailSentTo}</strong>.
         </div>
       )}
 
@@ -140,22 +115,13 @@ export default function ConvertPage() {
                       {Math.round(a.size / 1024)} KB &middot; {formatDate(a.createdAt)}
                     </p>
                   </div>
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <a
-                      href={downloadUrl(`/download/${shortKey}`)}
-                      className="px-3 py-1 bg-teal text-cream text-xs font-semibold rounded-sm hover:bg-teal-dark uppercase tracking-wide"
-                    >
-                      Download
-                    </a>
-                    {emailEnabled && (
-                      <Link
-                        to={`/email/cached/${shortKey}`}
-                        className="text-xs text-teal hover:underline"
-                      >
-                        Send to email
-                      </Link>
-                    )}
-                  </div>
+                  <button
+                    onClick={() => handleResend(a.cacheKey)}
+                    disabled={resending === shortKey}
+                    className="px-3 py-1 bg-teal text-cream text-xs font-semibold rounded-sm hover:bg-teal-dark disabled:opacity-50 cursor-pointer uppercase tracking-wide shrink-0"
+                  >
+                    {resending === shortKey ? "Sending\u2026" : "Send"}
+                  </button>
                 </li>
               );
             })}

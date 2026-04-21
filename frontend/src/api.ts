@@ -28,22 +28,22 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export function getHome() {
-  return request<{ emailEnabled: boolean; cachedArticles: CachedArticleMeta[] }>("/");
+  return request<{ cachedArticles: CachedArticleMeta[] }>("/");
 }
 
-export function convert(url: string, email?: string) {
-  return request<{ downloadUrl: string; downloadTitle: string; emailSentTo?: string }>(
+export function convert(url: string) {
+  return request<{ title: string; emailSentTo: string }>(
     "/convert",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, email }),
+      body: JSON.stringify({ url }),
     },
   );
 }
 
 export function getSubscriptions() {
-  return request<{ subscriptions: Subscription[]; emailEnabled: boolean }>("/subscriptions");
+  return request<{ subscriptions: Subscription[] }>("/subscriptions");
 }
 
 export function subscribe(url: string) {
@@ -59,18 +59,14 @@ export function deleteSubscription(id: string) {
 }
 
 export function getWeeklyBooks() {
-  return request<{ books: WeeklyBookMeta[]; emailEnabled: boolean }>("/weekly-books");
+  return request<{ books: WeeklyBookMeta[] }>("/weekly-books");
 }
 
-export function getEmailMeta(type: string, id: string) {
-  return request<{ epubType: string; epubId: string; title: string }>(`/email/${type}/${id}`);
-}
-
-export function sendEpub(email: string, epubType: string, epubId: string) {
+export function sendEpub(epubType: string, epubId: string) {
   return request<{ success: string }>("/send-epub", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, epub_type: epubType, epub_id: epubId }),
+    body: JSON.stringify({ epub_type: epubType, epub_id: epubId }),
   });
 }
 
@@ -92,9 +88,4 @@ export function login(email: string, password: string) {
 
 export function logout() {
   return request<{ message: string }>("/logout", { method: "POST" });
-}
-
-/** Returns the full URL to a backend download path. */
-export function downloadUrl(path: string): string {
-  return `${API_BASE}${path}`;
 }

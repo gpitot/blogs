@@ -95,6 +95,7 @@ export interface SubscriptionRepo {
 }
 
 export interface UserRepo {
+  getById(id: string): Promise<User | null>;
   getByApiKey(apiKey: string): Promise<User | null>;
   getByEmail(email: string): Promise<User | null>;
   create(user: User): Promise<void>;

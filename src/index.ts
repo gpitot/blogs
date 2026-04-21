@@ -24,7 +24,9 @@ import { createAuthMiddleware, AUTH_COOKIE } from "./middleware/auth.ts";
 import type { AppVariables } from "./types/context.ts";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
-const sqsClient = new SQSClient({ region: process.env.AWS_REGION ?? "us-east-1" });
+const sqsClient = new SQSClient({
+  region: process.env.AWS_REGION ?? "us-east-1",
+});
 
 const logger = createLogger("api");
 
@@ -68,10 +70,13 @@ export function createServices(e: AwsEnv) {
 
 const app = new Hono<{ Variables: AppVariables }>();
 
-app.use("*", cors({
-  origin: ["https://blog-dl.pages.dev", "http://localhost:5173"],
-  credentials: true,
-}));
+app.use(
+  "*",
+  cors({
+    origin: ["https://blog-dl.pages.dev", "http://localhost:5173"],
+    credentials: true,
+  }),
+);
 
 app.use("*", async (_c, next) => {
   await ensureSecrets();
@@ -102,14 +107,16 @@ app.post("/register", async (c) => {
   }
 
   const name = typeof body.name === "string" ? body.name.trim() : "";
-  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const email =
+    typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const password = typeof body.password === "string" ? body.password : "";
 
   if (!name) return c.json({ error: "Please provide a name." }, 400);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return c.json({ error: "Please provide a valid email address." }, 400);
   }
-  if (password.length < 8) return c.json({ error: "Password must be at least 8 characters." }, 400);
+  if (password.length < 8)
+    return c.json({ error: "Password must be at least 8 characters." }, 400);
 
   const existing = await userRepo.getByEmail(email);
   if (existing) {
@@ -131,7 +138,13 @@ app.post("/register", async (c) => {
   await userRepo.create(user);
   logger.info({ email }, "User registered, added to waitlist");
 
-  return c.json({ message: "You have been added to the waitlist. You will be notified when your account is approved." }, 201);
+  return c.json(
+    {
+      message:
+        "You have been added to the waitlist. You will be notified when your account is approved.",
+    },
+    201,
+  );
 });
 
 app.post("/login", async (c) => {
@@ -142,7 +155,8 @@ app.post("/login", async (c) => {
     return c.json({ error: "Invalid request body." }, 400);
   }
 
-  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const email =
+    typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const password = typeof body.password === "string" ? body.password : "";
 
   if (!email || !password) {
@@ -151,7 +165,9 @@ app.post("/login", async (c) => {
 
   const user = await userRepo.getByEmail(email);
   // Use constant-time comparison path even when user not found to avoid timing attacks
-  const passwordOk = user ? await verifyPassword(password, user.passwordHash) : false;
+  const passwordOk = user
+    ? await verifyPassword(password, user.passwordHash)
+    : false;
 
   if (!user || !passwordOk) {
     return c.json({ error: "Invalid email or password." }, 401);
@@ -185,12 +201,15 @@ app.post("/logout", (c) => {
 app.get("/", async (c) => {
   const { conversion } = createServices(env);
   const cachedArticles = await conversion.listCachedArticles();
-  return c.json({ emailEnabled: !!env.RESEND_API_KEY, cachedArticles });
+  return c.json({ cachedArticles });
 });
 
 app.post("/convert", async (c) => {
-  const emailEnabled = !!env.RESEND_API_KEY;
-  let body: { url?: string; email?: string };
+  if (!env.RESEND_API_KEY) {
+    return c.json({ error: "Email delivery is not configured." }, 503);
+  }
+
+  let body: { url?: string };
   try {
     body = await c.req.json();
   } catch {
@@ -203,7 +222,6 @@ app.post("/convert", async (c) => {
   }
 
   let blogUrl: string;
-  let emailAddress: string | null = null;
   try {
     const parsed = new URL(raw.trim());
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -211,49 +229,47 @@ app.post("/convert", async (c) => {
     }
     blogUrl = parsed.href;
   } catch {
-    return c.json({ error: "Invalid URL. Please enter a valid blog post URL." }, 400);
+    return c.json(
+      { error: "Invalid URL. Please enter a valid blog post URL." },
+      400,
+    );
   }
 
-  if (body.email && typeof body.email === "string" && body.email.trim()) {
-    emailAddress = body.email.trim();
-  }
-
+  const user = c.get("user");
   const { conversion } = createServices(env);
 
-  logger.info({ url: blogUrl, hasEmail: !!emailAddress }, "Converting article");
+  logger.info({ url: blogUrl, email: user.email }, "Converting article");
 
   const cacheKey = await urlToKey(blogUrl);
   const cached = await conversion.getCachedConversion(cacheKey);
   if (cached) {
-    logger.debug({ cacheKey, title: cached.title }, "Returning cached conversion");
-    if (emailAddress && env.RESEND_API_KEY) {
-      try {
-        const buf = await conversion.getEpubData(cached.kvKey);
-        if (buf) {
-          const safeTitle = cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
-          await sendEpubEmail({
-            apiKey: env.RESEND_API_KEY,
-            fromAddress: env.RESEND_FROM_ADDRESS ?? "",
-            to: emailAddress,
-            title: cached.title,
-            filename: `${safeTitle}.epub`,
-            epubBytes: new Uint8Array(buf),
-          });
-        }
-        const shortKey = cacheKey.replace("epub:", "");
-        return c.json({
-          downloadUrl: `/download/${shortKey}`,
-          downloadTitle: cached.title,
-          emailSentTo: emailAddress,
+    logger.debug(
+      { cacheKey, title: cached.title },
+      "Returning cached conversion",
+    );
+    try {
+      const buf = await conversion.getEpubData(cached.kvKey);
+      if (buf) {
+        const safeTitle =
+          cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
+        await sendEpubEmail({
+          apiKey: env.RESEND_API_KEY,
+          fromAddress: env.RESEND_FROM_ADDRESS ?? "",
+          to: user.email,
+          title: cached.title,
+          filename: `${safeTitle}.epub`,
+          epubBytes: new Uint8Array(buf),
         });
-      } catch (err) {
-        logger.error({ err, url: blogUrl }, "Failed to send email for cached conversion");
-        const msg = err instanceof Error ? err.message : String(err);
-        return c.json({ error: `Failed to send email: ${msg}` }, 500);
       }
+      return c.json({ title: cached.title, emailSentTo: user.email });
+    } catch (err) {
+      logger.error(
+        { err, url: blogUrl },
+        "Failed to send email for cached conversion",
+      );
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: `Failed to send email: ${msg}` }, 500);
     }
-    const shortKey = cacheKey.replace("epub:", "");
-    return c.json({ downloadUrl: `/download/${shortKey}`, downloadTitle: cached.title });
   }
 
   let html: string;
@@ -262,9 +278,14 @@ app.post("/convert", async (c) => {
       signal: AbortSignal.timeout(5000),
     });
     if (!resp.ok) {
-      logger.warn({ url: blogUrl, status: resp.status }, "Failed to fetch article URL");
+      logger.warn(
+        { url: blogUrl, status: resp.status },
+        "Failed to fetch article URL",
+      );
       return c.json(
-        { error: `Could not fetch that URL (HTTP ${resp.status}). Is it publicly accessible?` },
+        {
+          error: `Could not fetch that URL (HTTP ${resp.status}). Is it publicly accessible?`,
+        },
         400,
       );
     }
@@ -277,89 +298,22 @@ app.post("/convert", async (c) => {
 
   try {
     const result = await conversion.convertSingleArticle(blogUrl, html);
-    if (emailAddress && env.RESEND_API_KEY) {
-      try {
-        const safeTitle = result.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
-        await sendEpubEmail({
-          apiKey: env.RESEND_API_KEY,
-          fromAddress: env.RESEND_FROM_ADDRESS ?? "",
-          to: emailAddress,
-          title: result.title,
-          filename: `${safeTitle}.epub`,
-          epubBytes: result.epubBytes,
-        });
-        const shortKey = result.cacheKey.replace("epub:", "");
-        return c.json({
-          downloadUrl: `/download/${shortKey}`,
-          downloadTitle: result.title,
-          emailSentTo: emailAddress,
-        });
-      } catch (err) {
-        logger.error({ err, url: blogUrl }, "Failed to send email after conversion");
-        const msg = err instanceof Error ? err.message : String(err);
-        return c.json({ error: `Failed to send email: ${msg}` }, 500);
-      }
-    }
-    const shortKey = result.cacheKey.replace("epub:", "");
-    return c.json({ downloadUrl: `/download/${shortKey}`, downloadTitle: result.title });
+    const safeTitle =
+      result.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
+    await sendEpubEmail({
+      apiKey: env.RESEND_API_KEY,
+      fromAddress: env.RESEND_FROM_ADDRESS ?? "",
+      to: user.email,
+      title: result.title,
+      filename: `${safeTitle}.epub`,
+      epubBytes: result.epubBytes,
+    });
+    return c.json({ title: result.title, emailSentTo: user.email });
   } catch (err) {
     logger.error({ err, url: blogUrl }, "Failed to convert article");
     const msg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Failed to convert article: ${msg}` }, 500);
   }
-});
-
-app.get("/download/:key", async (c) => {
-  const key = c.req.param("key");
-  if (!/^[a-f0-9]+$/.test(key)) return c.notFound();
-
-  const { conversion } = createServices(env);
-  const cached = await conversion.getCachedConversion(`epub:${key}`);
-  if (!cached) {
-    return c.json({ error: "EPUB not found or expired." }, 404);
-  }
-
-  const buf = await conversion.getEpubData(cached.kvKey);
-  if (!buf) {
-    return c.json({ error: "EPUB data not found." }, 404);
-  }
-
-  const safeTitle =
-    cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
-  return new Response(buf, {
-    headers: {
-      "Content-Type": "application/epub+zip",
-      "Content-Disposition": `attachment; filename="${safeTitle}.epub"`,
-      "Content-Length": cached.size.toString(),
-      "Cache-Control": "public, max-age=604800",
-    },
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Per-article download (subscription articles)
-// ---------------------------------------------------------------------------
-
-app.get("/download/article/:id", async (c) => {
-  const id = c.req.param("id");
-  if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
-
-  const { posts, conversion } = createServices(env);
-  const article = await posts.getArticle(id);
-  if (!article) {
-    return c.json({ error: "Article not found or expired." }, 404);
-  }
-
-  const epubBytes = await conversion.convertArticleToEpub(article);
-  const safeTitle =
-    article.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
-  return new Response(epubBytes, {
-    headers: {
-      "Content-Type": "application/epub+zip",
-      "Content-Disposition": `attachment; filename="${safeTitle}.epub"`,
-      "Content-Length": epubBytes.byteLength.toString(),
-    },
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -370,7 +324,7 @@ app.get("/subscriptions", async (c) => {
   const user = c.get("user");
   const { blogs } = createServices(env);
   const subscriptions = await blogs.listSubscriptions(user.id);
-  return c.json({ subscriptions, emailEnabled: !!env.RESEND_API_KEY });
+  return c.json({ subscriptions });
 });
 
 app.post("/subscriptions", async (c) => {
@@ -407,14 +361,22 @@ app.post("/subscriptions", async (c) => {
 
   const fetchPostsQueueUrl = process.env.FETCH_POSTS_QUEUE_URL;
   if (fetchPostsQueueUrl) {
-    await sqsClient.send(new SendMessageCommand({
-      QueueUrl: fetchPostsQueueUrl,
-      MessageBody: JSON.stringify({ subscriptionId: result.subscription.id, userId: user.id }),
-    }));
+    await sqsClient.send(
+      new SendMessageCommand({
+        QueueUrl: fetchPostsQueueUrl,
+        MessageBody: JSON.stringify({
+          subscriptionId: result.subscription.id,
+          userId: user.id,
+        }),
+      }),
+    );
   }
 
   return c.json(
-    { subscription: result.subscription, message: `Subscribed to "${result.subscription.title}".` },
+    {
+      subscription: result.subscription,
+      message: `Subscribed to "${result.subscription.title}".`,
+    },
     201,
   );
 });
@@ -442,84 +404,24 @@ app.post("/subscriptions/:id/delete", async (c) => {
 app.get("/weekly-books", async (c) => {
   const { conversion } = createServices(env);
   const books = await conversion.listWeeklyBooks();
-  return c.json({ books, emailEnabled: !!env.RESEND_API_KEY });
-});
-
-app.get("/download/weekly/:weekKey", async (c) => {
-  const weekKey = c.req.param("weekKey");
-  if (!/^\d{4}-W\d{2}$/.test(weekKey)) return c.notFound();
-
-  const { conversion } = createServices(env);
-  const result = await conversion.getWeeklyBook(weekKey);
-  if (!result) {
-    return c.json({ error: "Weekly book not found or expired." }, 404);
-  }
-
-  const safeTitle =
-    result.meta.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() ||
-    "weekly-reading";
-  return new Response(result.buf, {
-    headers: {
-      "Content-Type": "application/epub+zip",
-      "Content-Disposition": `attachment; filename="${safeTitle}.epub"`,
-      "Content-Length": result.meta.size.toString(),
-      "Cache-Control": "public, max-age=86400",
-    },
-  });
+  return c.json({ books });
 });
 
 // ---------------------------------------------------------------------------
 // Email delivery
 // ---------------------------------------------------------------------------
 
-app.get("/email/:type/:id", async (c) => {
-  const type = c.req.param("type");
-  const id = c.req.param("id");
-
-  if (!env.RESEND_API_KEY) return c.json({ error: "Email delivery is not configured." }, 404);
-
-  const { conversion, posts } = createServices(env);
-
-  if (type === "weekly") {
-    if (!/^\d{4}-W\d{2}$/.test(id)) return c.notFound();
-    const books = await conversion.listWeeklyBooks();
-    const book = books.find((b) => b.weekKey === id);
-    if (!book) return c.json({ error: "Weekly book not found or expired." }, 404);
-    return c.json({ epubType: "weekly", epubId: id, title: book.title });
-  }
-
-  if (type === "article") {
-    if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
-    const article = await posts.getArticle(id);
-    if (!article) return c.json({ error: "Article not found or expired." }, 404);
-    return c.json({ epubType: "article", epubId: id, title: article.title });
-  }
-
-  if (type === "cached") {
-    if (!/^[a-f0-9]+$/.test(id)) return c.notFound();
-    const cached = await conversion.getCachedConversion(`epub:${id}`);
-    if (!cached) return c.json({ error: "EPUB not found or expired." }, 404);
-    return c.json({ epubType: "cached", epubId: id, title: cached.title });
-  }
-
-  return c.notFound();
-});
-
 app.post("/send-epub", async (c) => {
-  let body: { email?: string; epub_type?: string; epub_id?: string };
+  let body: { epub_type?: string; epub_id?: string };
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "Invalid request body." }, 400);
   }
 
-  const email = typeof body.email === "string" ? body.email.trim() : "";
+  const user = c.get("user");
   const type = typeof body.epub_type === "string" ? body.epub_type : "";
   const id = typeof body.epub_id === "string" ? body.epub_id : "";
-
-  if (!email) {
-    return c.json({ error: "Please provide an email address." }, 400);
-  }
 
   if (!env.RESEND_API_KEY) {
     return c.json({ error: "Email delivery is not configured." }, 503);
@@ -533,16 +435,19 @@ app.post("/send-epub", async (c) => {
     let filename: string;
 
     if (type === "weekly") {
-      if (!/^\d{4}-W\d{2}$/.test(id)) return c.json({ error: "Invalid ID." }, 400);
+      if (!/^\d{4}-W\d{2}$/.test(id))
+        return c.json({ error: "Invalid ID." }, 400);
       const result = await conversion.getWeeklyBook(id);
-      if (!result) return c.json({ error: "Weekly book not found or expired." }, 404);
+      if (!result)
+        return c.json({ error: "Weekly book not found or expired." }, 404);
       epubBytes = new Uint8Array(result.buf);
       title = result.meta.title;
       filename = `${result.meta.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "weekly-reading"}.epub`;
     } else if (type === "article") {
       if (!/^[a-f0-9]+$/.test(id)) return c.json({ error: "Invalid ID." }, 400);
       const article = await posts.getArticle(id);
-      if (!article) return c.json({ error: "Article not found or expired." }, 404);
+      if (!article)
+        return c.json({ error: "Article not found or expired." }, 404);
       epubBytes = await conversion.convertArticleToEpub(article);
       title = article.title;
       filename = `${article.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article"}.epub`;
@@ -551,7 +456,8 @@ app.post("/send-epub", async (c) => {
       const cached = await conversion.getCachedConversion(`epub:${id}`);
       if (!cached) return c.json({ error: "EPUB not found or expired." }, 404);
       const buf = await conversion.getEpubData(cached.kvKey);
-      if (!buf) return c.json({ error: "EPUB data not found or expired." }, 404);
+      if (!buf)
+        return c.json({ error: "EPUB data not found or expired." }, 404);
       epubBytes = new Uint8Array(buf);
       title = cached.title;
       filename = `${cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article"}.epub`;
@@ -562,13 +468,13 @@ app.post("/send-epub", async (c) => {
     await sendEpubEmail({
       apiKey: env.RESEND_API_KEY,
       fromAddress: env.RESEND_FROM_ADDRESS ?? "",
-      to: email,
+      to: user.email,
       title,
       filename,
       epubBytes,
     });
 
-    return c.json({ success: `EPUB sent to ${email}` });
+    return c.json({ success: `EPUB sent to ${user.email}` });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return c.json({ error: `Failed to send email: ${msg}` }, 500);

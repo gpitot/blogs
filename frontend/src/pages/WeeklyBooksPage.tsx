@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { getWeeklyBooks, downloadUrl } from "../api";
+import { getWeeklyBooks, sendEpub } from "../api";
 import type { WeeklyBookMeta } from "../types";
 
 function formatDate(ms: number): string {
@@ -13,14 +13,24 @@ function formatDate(ms: number): string {
 
 export default function WeeklyBooksPage() {
   const [books, setBooks] = useState<WeeklyBookMeta[]>([]);
-  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [sending, setSending] = useState<string | null>(null);
 
   useEffect(() => {
     getWeeklyBooks().then((data) => {
       setBooks(data.books);
-      setEmailEnabled(data.emailEnabled);
     });
   }, []);
+
+  async function handleResend(weekKey: string) {
+    setSending(weekKey);
+    try {
+      await sendEpub("weekly", weekKey);
+    } catch {
+      // ignore
+    } finally {
+      setSending(null);
+    }
+  }
 
   return (
     <div>
@@ -51,22 +61,13 @@ export default function WeeklyBooksPage() {
                   {Math.round(book.size / 1024)} KB &middot; {formatDate(book.createdAt)}
                 </p>
               </div>
-              <div className="flex flex-col items-end gap-1 shrink-0">
-                <a
-                  href={downloadUrl(`/download/weekly/${book.weekKey}`)}
-                  className="px-3 py-1 bg-teal text-cream text-xs font-semibold rounded-sm hover:bg-teal-dark uppercase tracking-wide"
-                >
-                  Download
-                </a>
-                {emailEnabled && (
-                  <Link
-                    to={`/email/weekly/${book.weekKey}`}
-                    className="text-xs text-teal hover:underline"
-                  >
-                    Send to email
-                  </Link>
-                )}
-              </div>
+              <button
+                onClick={() => handleResend(book.weekKey)}
+                disabled={sending === book.weekKey}
+                className="px-3 py-1 bg-teal text-cream text-xs font-semibold rounded-sm hover:bg-teal-dark disabled:opacity-50 cursor-pointer uppercase tracking-wide shrink-0"
+              >
+                {sending === book.weekKey ? "Sending\u2026" : "Send"}
+              </button>
             </li>
           ))}
         </ul>

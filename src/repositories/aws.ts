@@ -162,6 +162,10 @@ export class DynamoUserRepo implements UserRepo {
     ]);
   }
 
+  async getById(id: string): Promise<User | null> {
+    return dbGet<User>(this.doc, this.table, `USER#${id}`, "#ITEM");
+  }
+
   async getByEmail(email: string): Promise<User | null> {
     const ref = await dbGet<{ userId: string }>(this.doc, this.table, `USER_BY_EMAIL#${email.toLowerCase()}`, "#ITEM");
     if (!ref) return null;

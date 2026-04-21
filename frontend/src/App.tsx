@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate } from "re
 import ConvertPage from "./pages/ConvertPage";
 import SubscriptionsPage from "./pages/SubscriptionsPage";
 import WeeklyBooksPage from "./pages/WeeklyBooksPage";
-import EmailPage from "./pages/EmailPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import { getHome, logout, onUnauthorized } from "./api";
@@ -111,7 +110,6 @@ function AppInner() {
               <Route path="/" element={<ConvertPage />} />
               <Route path="/subscriptions" element={<SubscriptionsPage />} />
               <Route path="/weekly-books" element={<WeeklyBooksPage />} />
-              <Route path="/email/:type/:id" element={<EmailPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </>
