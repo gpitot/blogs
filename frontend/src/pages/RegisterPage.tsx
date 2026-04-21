@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { register } from "../api";
+import KindleHelp from "../KindleHelp";
 
 export default function RegisterPage() {
   const [name, setName] = useState("");
@@ -69,7 +70,7 @@ export default function RegisterPage() {
 
         <div className="flex flex-col gap-1">
           <label className="text-xs font-mono uppercase tracking-widest text-brown-light">
-            Email
+            Kindle Email
           </label>
           <input
             type="email"
@@ -78,6 +79,7 @@ export default function RegisterPage() {
             required
             className="px-3 py-2 bg-parchment border border-tan rounded-sm text-sm text-brown focus:outline-none focus:ring-1 focus:ring-teal"
           />
+          <KindleHelp />
         </div>
 
         <div className="flex flex-col gap-1">
