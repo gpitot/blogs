@@ -1,4 +1,4 @@
-import type { AwsEnv } from "./repositories/types.ts";
+import type { AwsEnv, PendingArticle } from "./repositories/types.ts";
 import { DynamoSubscriptionRepo, DynamoArticleRepo, DynamoS3EpubRepo, DynamoUserRepo } from "./repositories/aws.ts";
 import { ConversionService } from "./services/conversion.service.ts";
 import { sendEpubEmail } from "./services/email.service.ts";
@@ -21,60 +21,62 @@ async function runWeeklyJob(): Promise<void> {
   const conversion = new ConversionService(epubRepo, { processArticleImages });
 
   const subs = await subsRepo.list();
-  logger.info({ subCount: subs.length }, "Compiling weekly book from cached articles");
+  logger.info({ subCount: subs.length }, "Starting weekly book compilation");
 
-  const articles = (
-    await Promise.all(
-      subs.map(async (sub) => {
-        const latest = sub.convertedArticles?.[0];
-        if (!latest) return null;
-        const article = await articleRepo.get(latest.articleId);
-        if (!article) {
-          logger.warn({ sub: sub.title, articleId: latest.articleId }, "Cached article not found, skipping");
-          return null;
-        }
-        return article;
-      }),
-    )
-  ).filter(Boolean) as Awaited<ReturnType<typeof articleRepo.get>>[];
-
-  const validArticles = articles.filter((a): a is NonNullable<typeof a> => a !== null);
-
-  if (validArticles.length === 0) {
-    logger.info("No cached articles found, skipping book generation");
-    return;
-  }
-
-  logger.info({ articleCount: validArticles.length }, "Compiling weekly book");
-  const meta = await conversion.compileWeeklyBook(validArticles);
-  if (!meta) {
-    logger.error("compileWeeklyBook returned null");
-    return;
+  const subsByUser = new Map<string, typeof subs>();
+  for (const sub of subs) {
+    if (!sub.userId) continue;
+    const list = subsByUser.get(sub.userId) ?? [];
+    list.push(sub);
+    subsByUser.set(sub.userId, list);
   }
 
   const resendApiKey = process.env.RESEND_API_KEY;
   const fromAddress = process.env.RESEND_FROM_ADDRESS ?? "";
-  if (!resendApiKey) {
-    logger.warn("RESEND_API_KEY not set, skipping email delivery");
-    return;
-  }
 
-  const weeklyData = await conversion.getWeeklyBook(meta.weekKey);
-  if (!weeklyData) {
-    logger.error({ weekKey: meta.weekKey }, "Failed to retrieve weekly book data for emailing");
-    return;
-  }
+  for (const [userId, userSubs] of subsByUser) {
+    const articles = (
+      await Promise.all(
+        userSubs.map(async (sub) => {
+          const latest = sub.convertedArticles?.[0];
+          if (!latest) return null;
+          const article = await articleRepo.get(latest.articleId);
+          if (!article) {
+            logger.warn({ sub: sub.title, articleId: latest.articleId }, "Cached article not found, skipping");
+            return null;
+          }
+          return article;
+        }),
+      )
+    ).filter((a): a is PendingArticle => a !== null);
 
-  const userIds = [...new Set(subs.map((s) => s.userId).filter(Boolean))];
-  const safeTitle = meta.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "weekly-reading";
+    if (articles.length === 0) {
+      logger.info({ userId }, "No articles for user, skipping");
+      continue;
+    }
 
-  for (const userId of userIds) {
+    logger.info({ userId, articleCount: articles.length }, "Compiling weekly book for user");
+    const meta = await conversion.compileWeeklyBook(articles, userId);
+    if (!meta) continue;
+
+    if (!resendApiKey) {
+      logger.warn("RESEND_API_KEY not set, skipping email delivery");
+      continue;
+    }
+
+    const weeklyData = await conversion.getWeeklyBook(userId, meta.weekKey);
+    if (!weeklyData) {
+      logger.error({ weekKey: meta.weekKey, userId }, "Failed to retrieve weekly book data for emailing");
+      continue;
+    }
+
     try {
       const user = await userRepo.getById(userId);
       if (!user) {
         logger.warn({ userId }, "User not found, skipping email");
         continue;
       }
+      const safeTitle = meta.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "weekly-reading";
       await sendEpubEmail({
         apiKey: resendApiKey,
         fromAddress,

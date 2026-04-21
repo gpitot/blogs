@@ -28,6 +28,7 @@ export interface WeeklyBookMeta {
 export interface CachedArticleMeta {
   cacheKey: string;
   title: string;
+  url: string;
   createdAt: number;
   size: number;
 }

@@ -42,8 +42,19 @@ export function convert(url: string) {
   );
 }
 
+export interface PopularSubscription {
+  feedUrl: string;
+  siteUrl: string;
+  title: string;
+  subscriberCount: number;
+}
+
 export function getSubscriptions() {
   return request<{ subscriptions: Subscription[] }>("/subscriptions");
+}
+
+export function getPopularSubscriptions() {
+  return request<{ popular: PopularSubscription[] }>("/subscriptions/popular");
 }
 
 export function subscribe(url: string) {

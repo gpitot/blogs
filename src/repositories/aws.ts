@@ -3,6 +3,8 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  QueryCommand,
+  ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
 import {
   S3Client,
@@ -12,8 +14,8 @@ import {
 import type {
   AwsEnv,
   User,
-  GlobalSubEntry,
   Subscription,
+  PopularSubscription,
   PendingArticle,
   CacheEntry,
   WeeklyBookMeta,
@@ -29,7 +31,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const INDEX_PK = "INDEX";
-const SUBS_SK = "SUBS";
+const POPULAR_SUBS_SK = "POPULAR_SUBS";
 const WEEKLY_BOOKS_SK = "WEEKLY_BOOKS";
 const CACHED_ARTICLES_SK = "CACHED_ARTICLES";
 
@@ -84,6 +86,8 @@ async function dbPut(
 // Subscription repository
 // ---------------------------------------------------------------------------
 
+const GSI_USER_ID = "userId-index";
+
 export class DynamoSubscriptionRepo implements SubscriptionRepo {
   private doc: DynamoDBDocumentClient;
   private table: string;
@@ -95,16 +99,27 @@ export class DynamoSubscriptionRepo implements SubscriptionRepo {
   }
 
   async list(): Promise<Subscription[]> {
-    const entries = await this.listEntries();
-    const subs = await Promise.all(entries.map((e) => this.get(e.subId)));
-    return subs.filter(Boolean) as Subscription[];
+    const res = await this.doc.send(new ScanCommand({
+      TableName: this.table,
+      IndexName: GSI_USER_ID,
+      FilterExpression: "begins_with(pk, :prefix)",
+      ExpressionAttributeValues: { ":prefix": "SUB#" },
+    }));
+    return (res.Items ?? [])
+      .map((item) => { try { return JSON.parse(item.data as string) as Subscription; } catch { return null; } })
+      .filter(Boolean) as Subscription[];
   }
 
   async listForUser(userId: string): Promise<Subscription[]> {
-    const entries = await this.listEntries();
-    const userEntries = entries.filter((e) => e.userId === userId);
-    const subs = await Promise.all(userEntries.map((e) => this.get(e.subId)));
-    return subs.filter(Boolean) as Subscription[];
+    const res = await this.doc.send(new QueryCommand({
+      TableName: this.table,
+      IndexName: GSI_USER_ID,
+      KeyConditionExpression: "userId = :uid AND begins_with(pk, :prefix)",
+      ExpressionAttributeValues: { ":uid": userId, ":prefix": "SUB#" },
+    }));
+    return (res.Items ?? [])
+      .map((item) => { try { return JSON.parse(item.data as string) as Subscription; } catch { return null; } })
+      .filter(Boolean) as Subscription[];
   }
 
   async get(id: string): Promise<Subscription | null> {
@@ -112,31 +127,45 @@ export class DynamoSubscriptionRepo implements SubscriptionRepo {
   }
 
   async put(sub: Subscription): Promise<void> {
-    await dbPut(this.doc, this.table, `SUB#${sub.id}`, "#ITEM", sub);
-    const entries = await this.listEntries();
-    if (!entries.some((e) => e.subId === sub.id)) {
-      await dbPut(this.doc, this.table, INDEX_PK, SUBS_SK, [
-        ...entries,
-        { userId: sub.userId, subId: sub.id },
-      ]);
-    }
+    const item: Record<string, unknown> = {
+      pk: `SUB#${sub.id}`,
+      sk: "#ITEM",
+      data: JSON.stringify(sub),
+      userId: sub.userId,
+    };
+    await this.doc.send(new PutCommand({ TableName: this.table, Item: item }));
   }
 
   async delete(id: string): Promise<void> {
     const { DeleteCommand } = await import("@aws-sdk/lib-dynamodb");
     await this.doc.send(new DeleteCommand({ TableName: this.table, Key: { pk: `SUB#${id}`, sk: "#ITEM" } }));
-    const entries = await this.listEntries();
-    await dbPut(this.doc, this.table, INDEX_PK, SUBS_SK, entries.filter((e) => e.subId !== id));
   }
 
-  private async listEntries(): Promise<GlobalSubEntry[]> {
-    const raw = await dbGet<GlobalSubEntry[] | string[]>(this.doc, this.table, INDEX_PK, SUBS_SK);
-    if (!raw) return [];
-    // Handle legacy format: string[] of subIds (no userId)
-    if (typeof raw[0] === "string") {
-      return (raw as string[]).map((subId) => ({ userId: "", subId }));
+  async getPopular(): Promise<PopularSubscription[]> {
+    const list = await dbGet<PopularSubscription[]>(this.doc, this.table, INDEX_PK, POPULAR_SUBS_SK);
+    return (list ?? []).filter((s) => s.subscriberCount > 0).sort((a, b) => b.subscriberCount - a.subscriberCount);
+  }
+
+  async incrementPopular(feedUrl: string, siteUrl: string, title: string): Promise<void> {
+    const list = await dbGet<PopularSubscription[]>(this.doc, this.table, INDEX_PK, POPULAR_SUBS_SK) ?? [];
+    const existing = list.find((s) => s.feedUrl === feedUrl);
+    if (existing) {
+      existing.subscriberCount++;
+      existing.title = title;
+      existing.siteUrl = siteUrl;
+    } else {
+      list.push({ feedUrl, siteUrl, title, subscriberCount: 1 });
     }
-    return raw as GlobalSubEntry[];
+    await dbPut(this.doc, this.table, INDEX_PK, POPULAR_SUBS_SK, list);
+  }
+
+  async decrementPopular(feedUrl: string): Promise<void> {
+    const list = await dbGet<PopularSubscription[]>(this.doc, this.table, INDEX_PK, POPULAR_SUBS_SK) ?? [];
+    const existing = list.find((s) => s.feedUrl === feedUrl);
+    if (existing) {
+      existing.subscriberCount = Math.max(0, existing.subscriberCount - 1);
+      await dbPut(this.doc, this.table, INDEX_PK, POPULAR_SUBS_SK, list);
+    }
   }
 }
 
@@ -270,29 +299,30 @@ export class DynamoS3EpubRepo implements EpubRepo {
     }
   }
 
-  async listWeeklyBooks(): Promise<WeeklyBookMeta[]> {
+  async listWeeklyBooks(userId: string): Promise<WeeklyBookMeta[]> {
     return (
-      (await dbGet<WeeklyBookMeta[]>(this.doc, this.table, INDEX_PK, WEEKLY_BOOKS_SK)) ?? []
+      (await dbGet<WeeklyBookMeta[]>(this.doc, this.table, INDEX_PK, `${WEEKLY_BOOKS_SK}#${userId}`)) ?? []
     );
   }
 
-  async addWeeklyBook(meta: WeeklyBookMeta, data: Uint8Array): Promise<void> {
+  async addWeeklyBook(userId: string, meta: WeeklyBookMeta, data: Uint8Array): Promise<void> {
     // Store binary in S3
     await this.putEpubData(meta.kvKey, data, WEEKLY_BOOK_TTL_SECS);
 
     // Update index in DynamoDB
-    const books = await this.listWeeklyBooks();
+    const books = await this.listWeeklyBooks(userId);
     const updated = [meta, ...books.filter((b) => b.weekKey !== meta.weekKey)].slice(
       0,
       MAX_WEEKLY_BOOKS,
     );
-    await dbPut(this.doc, this.table, INDEX_PK, WEEKLY_BOOKS_SK, updated);
+    await dbPut(this.doc, this.table, INDEX_PK, `${WEEKLY_BOOKS_SK}#${userId}`, updated);
   }
 
   async getWeeklyBookData(
+    userId: string,
     weekKey: string,
   ): Promise<{ meta: WeeklyBookMeta; buf: ArrayBuffer } | null> {
-    const books = await this.listWeeklyBooks();
+    const books = await this.listWeeklyBooks(userId);
     const meta = books.find((b) => b.weekKey === weekKey);
     if (!meta) return null;
     const buf = await this.getEpubData(meta.kvKey);
@@ -300,20 +330,20 @@ export class DynamoS3EpubRepo implements EpubRepo {
     return { meta, buf };
   }
 
-  async listCachedArticles(): Promise<CachedArticleMeta[]> {
+  async listCachedArticles(userId: string): Promise<CachedArticleMeta[]> {
     return (
-      (await dbGet<CachedArticleMeta[]>(this.doc, this.table, INDEX_PK, CACHED_ARTICLES_SK)) ??
+      (await dbGet<CachedArticleMeta[]>(this.doc, this.table, INDEX_PK, `${CACHED_ARTICLES_SK}#${userId}`)) ??
       []
     );
   }
 
-  async addCachedArticle(meta: CachedArticleMeta): Promise<void> {
-    const articles = await this.listCachedArticles();
+  async addCachedArticle(userId: string, meta: CachedArticleMeta): Promise<void> {
+    const articles = await this.listCachedArticles(userId);
     const updated = [meta, ...articles.filter((a) => a.cacheKey !== meta.cacheKey)].slice(
       0,
       MAX_CACHED_ARTICLES,
     );
-    await dbPut(this.doc, this.table, INDEX_PK, CACHED_ARTICLES_SK, updated);
+    await dbPut(this.doc, this.table, INDEX_PK, `${CACHED_ARTICLES_SK}#${userId}`, updated);
   }
 
   // Map existing kvKey naming conventions to S3 keys

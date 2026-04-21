@@ -199,8 +199,9 @@ app.post("/logout", (c) => {
 // ---------------------------------------------------------------------------
 
 app.get("/", async (c) => {
+  const user = c.get("user");
   const { conversion } = createServices(env);
-  const cachedArticles = await conversion.listCachedArticles();
+  const cachedArticles = await conversion.listCachedArticles(user.id);
   return c.json({ cachedArticles });
 });
 
@@ -297,7 +298,7 @@ app.post("/convert", async (c) => {
   }
 
   try {
-    const result = await conversion.convertSingleArticle(blogUrl, html);
+    const result = await conversion.convertSingleArticle(blogUrl, html, user.id);
     const safeTitle =
       result.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article";
     await sendEpubEmail({
@@ -325,6 +326,12 @@ app.get("/subscriptions", async (c) => {
   const { blogs } = createServices(env);
   const subscriptions = await blogs.listSubscriptions(user.id);
   return c.json({ subscriptions });
+});
+
+app.get("/subscriptions/popular", async (c) => {
+  const { blogs } = createServices(env);
+  const popular = await blogs.getPopularSubscriptions();
+  return c.json({ popular });
 });
 
 app.post("/subscriptions", async (c) => {
@@ -402,8 +409,9 @@ app.post("/subscriptions/:id/delete", async (c) => {
 // ---------------------------------------------------------------------------
 
 app.get("/weekly-books", async (c) => {
+  const user = c.get("user");
   const { conversion } = createServices(env);
-  const books = await conversion.listWeeklyBooks();
+  const books = await conversion.listWeeklyBooks(user.id);
   return c.json({ books });
 });
 
@@ -437,7 +445,7 @@ app.post("/send-epub", async (c) => {
     if (type === "weekly") {
       if (!/^\d{4}-W\d{2}$/.test(id))
         return c.json({ error: "Invalid ID." }, 400);
-      const result = await conversion.getWeeklyBook(id);
+      const result = await conversion.getWeeklyBook(user.id, id);
       if (!result)
         return c.json({ error: "Weekly book not found or expired." }, 404);
       epubBytes = new Uint8Array(result.buf);

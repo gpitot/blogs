@@ -20,11 +20,6 @@ export interface User {
   createdAt: number;
 }
 
-export interface GlobalSubEntry {
-  userId: string;
-  subId: string;
-}
-
 // ---------------------------------------------------------------------------
 // Data types
 // ---------------------------------------------------------------------------
@@ -78,8 +73,16 @@ export interface WeeklyBookMeta {
 export interface CachedArticleMeta {
   cacheKey: string;
   title: string;
+  url: string;
   createdAt: number;
   size: number;
+}
+
+export interface PopularSubscription {
+  feedUrl: string;
+  siteUrl: string;
+  title: string;
+  subscriberCount: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +95,9 @@ export interface SubscriptionRepo {
   get(id: string): Promise<Subscription | null>;
   put(sub: Subscription): Promise<void>;
   delete(id: string): Promise<void>;
+  getPopular(): Promise<PopularSubscription[]>;
+  incrementPopular(feedUrl: string, siteUrl: string, title: string): Promise<void>;
+  decrementPopular(feedUrl: string): Promise<void>;
 }
 
 export interface UserRepo {
@@ -111,13 +117,14 @@ export interface EpubRepo {
   putCachedMeta(cacheKey: string, entry: CacheEntry): Promise<void>;
   putEpubData(kvKey: string, data: Uint8Array, ttlSeconds: number): Promise<void>;
   getEpubData(kvKey: string): Promise<ArrayBuffer | null>;
-  listWeeklyBooks(): Promise<WeeklyBookMeta[]>;
-  addWeeklyBook(meta: WeeklyBookMeta, data: Uint8Array): Promise<void>;
+  listWeeklyBooks(userId: string): Promise<WeeklyBookMeta[]>;
+  addWeeklyBook(userId: string, meta: WeeklyBookMeta, data: Uint8Array): Promise<void>;
   getWeeklyBookData(
+    userId: string,
     weekKey: string,
   ): Promise<{ meta: WeeklyBookMeta; buf: ArrayBuffer } | null>;
-  listCachedArticles(): Promise<CachedArticleMeta[]>;
-  addCachedArticle(meta: CachedArticleMeta): Promise<void>;
+  listCachedArticles(userId: string): Promise<CachedArticleMeta[]>;
+  addCachedArticle(userId: string, meta: CachedArticleMeta): Promise<void>;
 }
 
 export const MAX_SEEN_GUIDS = 200;

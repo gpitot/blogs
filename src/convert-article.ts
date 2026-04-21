@@ -34,11 +34,13 @@ export const handler: SQSHandler = async (event) => {
     let feedItem: FeedItem;
     let subId: string;
     let subTitle: string;
+    let userId: string;
     try {
-      ({ feedItem, subId, subTitle } = JSON.parse(record.body) as {
+      ({ feedItem, subId, subTitle, userId } = JSON.parse(record.body) as {
         feedItem: FeedItem;
         subId: string;
         subTitle: string;
+        userId: string;
       });
     } catch {
       logger.error({ body: record.body }, "Failed to parse SQS message");
@@ -52,7 +54,7 @@ export const handler: SQSHandler = async (event) => {
         continue;
       }
 
-      const cacheKey = await conversion.convertAndCacheSubscriptionArticle(article);
+      const cacheKey = await conversion.convertAndCacheSubscriptionArticle(article, userId);
 
       const sub = await subsRepo.get(subId);
       if (sub) {

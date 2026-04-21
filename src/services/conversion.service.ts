@@ -25,6 +25,7 @@ export class ConversionService {
   async convertSingleArticle(
     url: string,
     html: string,
+    userId: string,
   ): Promise<{ cacheKey: string; epubBytes: Uint8Array; title: string }> {
     const cacheKey = await urlToKey(url);
     logger.debug({ url, cacheKey }, "Converting single article");
@@ -52,9 +53,10 @@ export class ConversionService {
       createdAt,
       size: epubBytes.byteLength,
     });
-    await this.epubs.addCachedArticle({
+    await this.epubs.addCachedArticle(userId, {
       cacheKey,
       title,
+      url,
       createdAt,
       size: epubBytes.byteLength,
     });
@@ -65,6 +67,7 @@ export class ConversionService {
 
   async convertAndCacheSubscriptionArticle(
     article: PendingArticle,
+    userId: string,
   ): Promise<string> {
     const cacheKey = await urlToKey(article.url);
     const epubBytes = await this.convertArticleToEpub(article);
@@ -77,9 +80,10 @@ export class ConversionService {
       createdAt,
       size: epubBytes.byteLength,
     });
-    await this.epubs.addCachedArticle({
+    await this.epubs.addCachedArticle(userId, {
       cacheKey,
       title: article.title,
+      url: article.url,
       createdAt,
       size: epubBytes.byteLength,
     });
@@ -107,6 +111,7 @@ export class ConversionService {
 
   async compileWeeklyBook(
     articles: PendingArticle[],
+    userId: string,
   ): Promise<WeeklyBookMeta | null> {
     if (articles.length === 0) return null;
 
@@ -172,7 +177,7 @@ export class ConversionService {
       size: epubBytes.byteLength,
     };
 
-    await this.epubs.addWeeklyBook(meta, epubBytes);
+    await this.epubs.addWeeklyBook(userId, meta, epubBytes);
     logger.info(
       { title: bookTitle, chapters: chapters.length, sizeKb: Math.round(epubBytes.byteLength / 1024) },
       "Weekly book compiled",
@@ -190,17 +195,18 @@ export class ConversionService {
   }
 
   async getWeeklyBook(
+    userId: string,
     weekKey: string,
   ): Promise<{ meta: WeeklyBookMeta; buf: ArrayBuffer } | null> {
-    return this.epubs.getWeeklyBookData(weekKey);
+    return this.epubs.getWeeklyBookData(userId, weekKey);
   }
 
-  async listWeeklyBooks(): Promise<WeeklyBookMeta[]> {
-    return this.epubs.listWeeklyBooks();
+  async listWeeklyBooks(userId: string): Promise<WeeklyBookMeta[]> {
+    return this.epubs.listWeeklyBooks(userId);
   }
 
-  async listCachedArticles(): Promise<CachedArticleMeta[]> {
-    return this.epubs.listCachedArticles();
+  async listCachedArticles(userId: string): Promise<CachedArticleMeta[]> {
+    return this.epubs.listCachedArticles(userId);
   }
 
   private getISOWeekNumber(date: Date): number {

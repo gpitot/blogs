@@ -1,6 +1,7 @@
 import type {
   SubscriptionRepo,
   Subscription,
+  PopularSubscription,
 } from "../repositories/types.ts";
 import { MAX_SEEN_GUIDS } from "../repositories/types.ts";
 import type { FeedClient } from "./interfaces.ts";
@@ -58,18 +59,27 @@ export class BlogsService {
     };
 
     await this.subs.put(sub);
+    await this.subs.incrementPopular(feedUrl, url, sub.title);
     logger.info({ title: sub.title, feedUrl }, "Subscribed to feed");
     return { subscription: sub };
   }
 
   async unsubscribe(id: string): Promise<void> {
-    logger.info({ id }, "Unsubscribed");
+    const sub = await this.subs.get(id);
     await this.subs.delete(id);
+    if (sub) {
+      await this.subs.decrementPopular(sub.feedUrl);
+    }
+    logger.info({ id }, "Unsubscribed");
   }
 
   async listSubscriptions(userId: string): Promise<Subscription[]> {
     const subs = await this.subs.listForUser(userId);
     return subs.sort((a, b) => b.addedAt - a.addedAt);
+  }
+
+  async getPopularSubscriptions(): Promise<PopularSubscription[]> {
+    return this.subs.getPopular();
   }
 
   async checkForNewPosts(sub: Subscription): Promise<FeedItem[]> {

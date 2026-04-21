@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { getSubscriptions, subscribe, deleteSubscription, sendEpub } from "../api";
+import { getSubscriptions, getPopularSubscriptions, subscribe, deleteSubscription, sendEpub } from "../api";
+import type { PopularSubscription } from "../api";
 import type { Subscription } from "../types";
 
 function formatDate(ms: number): string {
@@ -23,6 +24,7 @@ function formatRelative(ms: number): string {
 
 export default function SubscriptionsPage() {
   const [subs, setSubs] = useState<Subscription[]>([]);
+  const [popular, setPopular] = useState<PopularSubscription[]>([]);
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +34,9 @@ export default function SubscriptionsPage() {
   useEffect(() => {
     getSubscriptions().then((data) => {
       setSubs(data.subscriptions);
+    });
+    getPopularSubscriptions().then((data) => {
+      setPopular(data.popular);
     });
   }, []);
 
@@ -180,6 +185,44 @@ export default function SubscriptionsPage() {
             </li>
           ))}
         </ul>
+      )}
+
+      {popular.length > 0 && (
+        <>
+          <h3 className="font-heading text-lg font-bold mt-8 mb-3 text-brown">Popular Blogs</h3>
+          <ul className="space-y-2">
+            {popular.map((p) => (
+              <li
+                key={p.feedUrl}
+                className="flex items-center justify-between border border-tan rounded-sm p-3 bg-cream shadow-[1px_1px_4px_rgba(0,0,0,0.05)] gap-4"
+              >
+                <div>
+                  <p className="font-medium text-sm text-brown">{p.title}</p>
+                  <p className="text-xs text-brown-light">
+                    <a
+                      href={p.siteUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-teal hover:underline"
+                    >
+                      {p.siteUrl}
+                    </a>
+                    {" \u00b7 "}
+                    {p.subscriberCount} subscriber{p.subscriberCount !== 1 ? "s" : ""}
+                  </p>
+                </div>
+                {!subs.some((s) => s.feedUrl === p.feedUrl) && (
+                  <button
+                    onClick={() => { setUrl(p.siteUrl); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    className="px-3 py-1 bg-teal text-cream text-xs font-semibold rounded-sm hover:bg-teal-dark cursor-pointer uppercase tracking-wide shrink-0"
+                  >
+                    Add
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );
