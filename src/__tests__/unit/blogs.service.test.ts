@@ -28,7 +28,7 @@ function mockUserSubRepo(): UserSubscriptionRepo {
 
 function mockFeedClient(overrides?: Partial<FeedClient>): FeedClient {
   return {
-    detectFeedUrl: vi.fn().mockResolvedValue("https://example.com/feed"),
+    detectFeedUrl: vi.fn().mockResolvedValue({ feedUrl: "https://example.com/feed" }),
     fetchAndParseFeed: vi.fn().mockResolvedValue({
       title: "Test Blog",
       items: [],
@@ -75,7 +75,9 @@ describe("BlogsService", () => {
 
   describe("subscribe", () => {
     it("returns error when feed not found", async () => {
-      (feedClient.detectFeedUrl as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (feedClient.detectFeedUrl as ReturnType<typeof vi.fn>).mockResolvedValue({
+        reason: "no-feed",
+      });
 
       const result = await service.subscribe("user1", "https://example.com");
 
@@ -83,6 +85,30 @@ describe("BlogsService", () => {
       expect((result as { error: string }).error).toContain(
         "Could not find an RSS or Atom feed",
       );
+      expect(feedRepo.put).not.toHaveBeenCalled();
+    });
+
+    it("distinguishes a blocked site from a missing feed", async () => {
+      (feedClient.detectFeedUrl as ReturnType<typeof vi.fn>).mockResolvedValue({
+        reason: "blocked",
+        detail: "SiteGround bot challenge",
+      });
+
+      const result = await service.subscribe("user1", "https://example.com");
+
+      expect((result as { error: string }).error).toContain("blocking automated requests");
+      expect(feedRepo.put).not.toHaveBeenCalled();
+    });
+
+    it("reports an unreachable URL distinctly", async () => {
+      (feedClient.detectFeedUrl as ReturnType<typeof vi.fn>).mockResolvedValue({
+        reason: "unreachable",
+        detail: "HTTP 404",
+      });
+
+      const result = await service.subscribe("user1", "https://example.com");
+
+      expect((result as { error: string }).error).toContain("Could not reach that URL");
       expect(feedRepo.put).not.toHaveBeenCalled();
     });
 

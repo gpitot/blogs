@@ -1,8 +1,8 @@
-import type { ParsedFeed } from "./rss.ts";
+import type { FeedDiscovery, ParsedFeed } from "./rss.ts";
 import type { EpubImage } from "./images.ts";
 
 export interface FeedClient {
-  detectFeedUrl(url: string): Promise<string | null>;
+  detectFeedUrl(url: string): Promise<FeedDiscovery>;
   fetchAndParseFeed(feedUrl: string): Promise<ParsedFeed>;
 }
 

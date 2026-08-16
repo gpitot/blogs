@@ -6,11 +6,25 @@ import type {
 } from "../repositories/types.ts";
 import { MAX_SEEN_GUIDS } from "../repositories/types.ts";
 import type { FeedClient } from "./interfaces.ts";
-import type { FeedItem } from "./rss.ts";
+import type { FeedDiscoveryFailure, FeedItem } from "./rss.ts";
 import { feedUrlToId } from "../utils.ts";
 import { createLogger } from "../logger.ts";
 
 const logger = createLogger("blogs-service");
+
+function discoveryErrorMessage(reason: FeedDiscoveryFailure): string {
+  switch (reason) {
+    case "blocked":
+      return (
+        "That site is blocking automated requests, so we could not read its feed. " +
+        "It may work again later — if it keeps failing, the site is refusing our servers."
+      );
+    case "unreachable":
+      return "Could not reach that URL. Check the address and that the site is publicly accessible.";
+    case "no-feed":
+      return "Could not find an RSS or Atom feed for that URL. Please provide the feed URL directly.";
+  }
+}
 
 export interface SubscriptionView {
   feedId: string;
@@ -34,14 +48,12 @@ export class BlogsService {
     url: string,
   ): Promise<{ subscription: SubscriptionView } | { error: string }> {
     logger.info({ url }, "Detecting feed URL");
-    const feedUrl = await this.feedClient.detectFeedUrl(url);
-    if (!feedUrl) {
-      logger.warn({ url }, "No feed found for URL");
-      return {
-        error:
-          "Could not find an RSS or Atom feed for that URL. Please provide the feed URL directly.",
-      };
+    const discovery = await this.feedClient.detectFeedUrl(url);
+    if (!("feedUrl" in discovery)) {
+      logger.warn({ url, ...discovery }, "Feed discovery failed");
+      return { error: discoveryErrorMessage(discovery.reason) };
     }
+    const feedUrl = discovery.feedUrl;
 
     const feedId = await feedUrlToId(feedUrl);
     const alreadySubscribed = await this.userSubs.isSubscribed(userId, feedId);
