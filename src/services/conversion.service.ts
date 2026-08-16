@@ -170,7 +170,7 @@ export class ConversionService {
 
     const meta: WeeklyBookMeta = {
       weekKey,
-      kvKey: `weekly-book-data:${weekKey}`,
+      kvKey: `weekly-book-data:${userId}:${weekKey}`,
       title: bookTitle,
       createdAt: Date.now(),
       articleCount: chapters.length,

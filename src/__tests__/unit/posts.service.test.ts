@@ -44,6 +44,21 @@ const ARTICLE_HTML = `
 </body>
 </html>`;
 
+// Same shape as ARTICLE_HTML but unmistakably longer than any feed preview
+// used below, so the "keep the longer body" guard has an obvious winner.
+const LONG_ARTICLE_HTML = `
+<!DOCTYPE html>
+<html>
+<head><title>Test Post</title></head>
+<body>
+  <article>
+    <h1>Test Post</h1>
+    <p>${"The complete article body continues well past where the feed preview stopped. ".repeat(20)}</p>
+    <p>Readability uses heuristics to decide what counts as article content, and a longer body is more reliably identified.</p>
+  </article>
+</body>
+</html>`;
+
 describe("PostsService", () => {
   let repo: ArticleRepo;
   let fetcher: HtmlFetcher;
@@ -153,6 +168,90 @@ describe("PostsService", () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
       // Second call should be with corrected URL (slug at root)
       expect(fetchMock).toHaveBeenCalledWith("https://example.com/my-post/");
+    });
+
+    it("fetches the page when feed content ends in a 'Read more' link", async () => {
+      const preview =
+        "<p>" + "Preview prose. ".repeat(35) + "</p>" +
+        '<p><a href="https://example.com/post-1">Read more</a></p>';
+      const item = makeFeedItem({ content: preview });
+      (fetcher.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(LONG_ARTICLE_HTML);
+
+      const result = await service.fetchAndSave(item, "sub1", "Blog");
+
+      expect(fetcher.fetch).toHaveBeenCalledWith(item.link);
+      expect(result).not.toBeNull();
+      expect(result!.content).toContain("continues well past where the feed preview stopped");
+      expect(result!.content).not.toContain("Read more");
+    });
+
+    it("skips the article when the fetched page is still truncated", async () => {
+      const preview =
+        "<p>" + "Preview prose. ".repeat(40) + "</p>" +
+        '<p><a href="https://example.com/post-1">Read more</a></p>';
+      const item = makeFeedItem({ content: preview });
+      // Fetch fails, so the truncated preview is all we have.
+      (fetcher.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const result = await service.fetchAndSave(item, "sub1", "Blog");
+
+      expect(result).toBeNull();
+      expect(repo.put).not.toHaveBeenCalled();
+    });
+
+    it("skips when the fetched page carries a paywall widget", async () => {
+      // Readability strips the widget, so the extracted body would otherwise
+      // look complete — the raw-HTML check is what catches this.
+      const preview =
+        "<p>" + "Preview prose. ".repeat(35) + "</p>" +
+        '<p><a href="https://example.com/post-1">Read more</a></p>';
+      const item = makeFeedItem({ content: preview });
+      const walled = LONG_ARTICLE_HTML.replace(
+        "</article>",
+        '</article><div data-testid="paywall" class="paywall"><h2 class="paywall-title">Continue reading this post for free.</h2></div>',
+      );
+      (fetcher.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(walled);
+
+      const result = await service.fetchAndSave(item, "sub1", "Blog");
+
+      expect(result).toBeNull();
+      expect(repo.put).not.toHaveBeenCalled();
+    });
+
+    it("skips paywalled articles", async () => {
+      const stub =
+        "<p>" + "The opening paragraph everyone can read. ".repeat(15) + "</p>" +
+        "<p>This post is for paid subscribers</p>";
+      const item = makeFeedItem({ content: stub });
+      (fetcher.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const result = await service.fetchAndSave(item, "sub1", "Blog");
+
+      expect(result).toBeNull();
+      expect(repo.put).not.toHaveBeenCalled();
+    });
+
+    it("keeps the longer feed preview when the fetched page yields less text", async () => {
+      const preview =
+        "<p>" + "Substantially longer preview prose. ".repeat(60) + "</p>" +
+        '<p><a href="https://example.com/post-1">Read more</a></p>';
+      const item = makeFeedItem({ content: preview });
+      (fetcher.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(ARTICLE_HTML);
+
+      const result = await service.fetchAndSave(item, "sub1", "Blog");
+
+      // The fetched page is shorter than the preview, so it is not a rescue —
+      // and the preview itself is truncated, so nothing ships.
+      expect(result).toBeNull();
+    });
+
+    it("does not fetch when the feed already carries the whole article", async () => {
+      const item = makeFeedItem({ content: "<p>" + "A".repeat(600) + "</p>" });
+
+      const result = await service.fetchAndSave(item, "sub1", "Blog");
+
+      expect(result).not.toBeNull();
+      expect(fetcher.fetch).not.toHaveBeenCalled();
     });
 
     it("saves article with correct metadata", async () => {

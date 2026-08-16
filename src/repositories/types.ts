@@ -18,6 +18,17 @@ export interface User {
   passwordHash: string;
   approved: boolean;
   createdAt: number;
+  /**
+   * Whether the weekly job emails the compiled book automatically. Undefined on
+   * users created before the setting existed, which keeps the original
+   * always-send behaviour — see {@link isAutoSendWeeklyEnabled}.
+   */
+  autoSendWeekly?: boolean;
+}
+
+/** Auto-send is on unless the user has explicitly opted out. */
+export function isAutoSendWeeklyEnabled(user: Pick<User, "autoSendWeekly">): boolean {
+  return user.autoSendWeekly !== false;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +104,16 @@ export interface CachedArticleMeta {
   size: number;
 }
 
+/**
+ * An article already placed in one of a user's weekly books, so it is never
+ * compiled into a second one. Recorded whether or not the book was emailed —
+ * an opted-out user still gets the book on the website.
+ */
+export interface SentArticle {
+  articleId: string;
+  sentAt: number;
+}
+
 // ---------------------------------------------------------------------------
 // Repository interfaces
 // ---------------------------------------------------------------------------
@@ -120,11 +141,17 @@ export interface UserRepo {
   getByApiKey(apiKey: string): Promise<User | null>;
   getByEmail(email: string): Promise<User | null>;
   create(user: User): Promise<void>;
+  setAutoSendWeekly(userId: string, enabled: boolean): Promise<User | null>;
 }
 
 export interface ArticleRepo {
   get(id: string): Promise<PendingArticle | null>;
   put(article: PendingArticle): Promise<void>;
+}
+
+export interface SentArticleRepo {
+  list(userId: string): Promise<SentArticle[]>;
+  add(userId: string, articleIds: string[]): Promise<void>;
 }
 
 export interface EpubRepo {
@@ -144,3 +171,13 @@ export interface EpubRepo {
 
 export const MAX_SEEN_GUIDS = 200;
 export const MAX_CONVERTED_ARTICLES = 20;
+
+/** Delivery history kept per user; must comfortably exceed feeds × MAX_ARTICLES_PER_FEED. */
+export const MAX_SENT_ARTICLES = 500;
+
+/**
+ * Ceiling on how many articles a single feed may contribute to one weekly book.
+ * Prevents a prolific (or newly subscribed, hence fully unsent) feed from
+ * crowding out the rest; the remainder carries over to following weeks.
+ */
+export const MAX_ARTICLES_PER_FEED = 5;

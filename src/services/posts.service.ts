@@ -1,15 +1,22 @@
 import type { ArticleRepo, PendingArticle } from "../repositories/types.ts";
 import type { HtmlFetcher } from "./interfaces.ts";
 import type { FeedItem } from "./rss.ts";
+import type { ExtractedArticle } from "./clean.ts";
 import {
   extractArticle,
   extractArticleFromFeedContent,
   extractCanonicalUrl,
 } from "./clean.ts";
+import { classifyCompleteness, detectRawPaywall, textLength } from "./truncation.ts";
 import { generateId } from "../utils.ts";
 import { createLogger } from "../logger.ts";
 
 const logger = createLogger("posts-service");
+
+type FetchResult =
+  | { kind: "article"; article: ExtractedArticle; url: string }
+  | { kind: "paywalled"; evidence: string }
+  | { kind: "unavailable" };
 
 export class PostsService {
   constructor(
@@ -22,8 +29,7 @@ export class PostsService {
     feedId: string,
     feedTitle: string,
   ): Promise<PendingArticle | null> {
-    let article: { title: string; content: string; byline: string } | null =
-      null;
+    let article: ExtractedArticle | null = null;
     let articleUrl = item.link;
 
     if (item.content && item.content.length >= 500) {
@@ -32,36 +38,34 @@ export class PostsService {
         item.title,
         item.link,
       );
+
+      // A long feed body is not necessarily the whole article — Substack ships
+      // multi-thousand-word previews that end at a "Read more" link. Only when
+      // the body looks cut short do we pay for the page fetch.
+      if (classifyCompleteness(article.content, articleUrl).kind !== "complete") {
+        const fetched = await this.fetchAndExtract(item.link, item.title);
+
+        if (fetched.kind === "paywalled") {
+          return this.skip(item, articleUrl, "paywalled", fetched.evidence);
+        }
+        if (
+          fetched.kind === "article" &&
+          classifyCompleteness(fetched.article.content, fetched.url).kind === "complete" &&
+          textLength(fetched.article.content) >= textLength(article.content)
+        ) {
+          article = fetched.article;
+          articleUrl = fetched.url;
+        }
+      }
     } else {
-      const html = await this.fetcher.fetch(item.link);
+      const fetched = await this.fetchAndExtract(item.link, item.title);
 
-      if (html) {
-        const canonical = extractCanonicalUrl(html);
-        const correctedUrl = canonical
-          ? this.deriveCorrectUrl(item.link, canonical)
-          : null;
-
-        if (correctedUrl) {
-          logger.debug(
-            { feedUrl: item.link, correctedUrl },
-            "Feed URL has homepage canonical, retrying",
-          );
-          const retryHtml = await this.fetcher.fetch(correctedUrl);
-          if (retryHtml) {
-            article = extractArticle(retryHtml, correctedUrl);
-            articleUrl = correctedUrl;
-          }
-        } else {
-          article = extractArticle(html, item.link);
-        }
-
-        if (article && !this.looksLikeArticle(article, item.title)) {
-          logger.debug(
-            { expected: item.title, extracted: article.title },
-            "Readability extracted wrong content, discarding",
-          );
-          article = null;
-        }
+      if (fetched.kind === "paywalled") {
+        return this.skip(item, item.link, "paywalled", fetched.evidence);
+      }
+      if (fetched.kind === "article") {
+        article = fetched.article;
+        articleUrl = fetched.url;
       }
 
       if (!article && item.content) {
@@ -70,12 +74,19 @@ export class PostsService {
           item.title,
           item.link,
         );
+        articleUrl = item.link;
       }
     }
 
     if (!article || !article.content) {
       logger.warn({ title: item.title }, "No content available for article, skipping");
       return null;
+    }
+
+    // Whatever body we settled on, refuse to ship a partial one.
+    const completeness = classifyCompleteness(article.content, articleUrl);
+    if (completeness.kind !== "complete") {
+      return this.skip(item, articleUrl, completeness.kind, completeness.evidence);
     }
 
     const pending: PendingArticle = {
@@ -96,6 +107,70 @@ export class PostsService {
 
   async getArticle(id: string): Promise<PendingArticle | null> {
     return this.articles.get(id);
+  }
+
+  /** Logs why an article is being dropped, so false positives stay visible. */
+  private skip(
+    item: FeedItem,
+    url: string,
+    verdict: string,
+    evidence: string,
+  ): null {
+    logger.info(
+      { title: item.title, url, verdict, evidence },
+      "Skipping incomplete article",
+    );
+    return null;
+  }
+
+  /**
+   * Fetches a page and runs Readability over it, following a homepage canonical
+   * to the real post URL when the feed link points at one. Returns null when the
+   * fetch fails or the extracted content doesn't look like the expected article.
+   */
+  private async fetchAndExtract(
+    url: string,
+    expectedTitle: string,
+  ): Promise<FetchResult> {
+    const html = await this.fetcher.fetch(url);
+    if (!html) return { kind: "unavailable" };
+
+    let article: ExtractedArticle | null = null;
+    let resolvedUrl = url;
+    let pageHtml = html;
+
+    const canonical = extractCanonicalUrl(html);
+    const correctedUrl = canonical ? this.deriveCorrectUrl(url, canonical) : null;
+
+    if (correctedUrl) {
+      logger.debug(
+        { feedUrl: url, correctedUrl },
+        "Feed URL has homepage canonical, retrying",
+      );
+      const retryHtml = await this.fetcher.fetch(correctedUrl);
+      if (retryHtml) {
+        pageHtml = retryHtml;
+        article = extractArticle(retryHtml, correctedUrl);
+        resolvedUrl = correctedUrl;
+      }
+    } else {
+      article = extractArticle(html, url);
+    }
+
+    // Must be judged on the raw page: Readability discards the paywall widget,
+    // leaving an extracted body that looks complete but stops at the wall.
+    const paywall = detectRawPaywall(pageHtml);
+    if (paywall) return { kind: "paywalled", evidence: paywall };
+
+    if (article && !this.looksLikeArticle(article, expectedTitle)) {
+      logger.debug(
+        { expected: expectedTitle, extracted: article.title },
+        "Readability extracted wrong content, discarding",
+      );
+      article = null;
+    }
+
+    return article ? { kind: "article", article, url: resolvedUrl } : { kind: "unavailable" };
   }
 
   private deriveCorrectUrl(

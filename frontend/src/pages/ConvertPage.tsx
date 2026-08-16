@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getHome, convert, sendEpub } from "../api";
+import { getHome, convert, downloadEpub, sendEpub } from "../api";
 import type { CachedArticleMeta } from "../types";
 
 function formatDate(ms: number): string {
@@ -20,6 +20,7 @@ export default function ConvertPage() {
     emailSentTo: string;
   } | null>(null);
   const [resending, setResending] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
 
   useEffect(() => {
     getHome().then((data) => {
@@ -51,6 +52,19 @@ export default function ConvertPage() {
       // ignore
     } finally {
       setResending(null);
+    }
+  }
+
+  async function handleDownload(article: CachedArticleMeta) {
+    const shortKey = article.cacheKey.replace("epub:", "");
+    setError(null);
+    setDownloading(shortKey);
+    try {
+      await downloadEpub("cached", shortKey, `${article.title}.epub`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloading(null);
     }
   }
 
@@ -115,13 +129,22 @@ export default function ConvertPage() {
                       {Math.round(a.size / 1024)} KB &middot; {formatDate(a.createdAt)}
                     </p>
                   </div>
-                  <button
-                    onClick={() => handleResend(a.cacheKey)}
-                    disabled={resending === shortKey}
-                    className="px-3 py-1 bg-teal text-cream text-xs font-semibold rounded-sm hover:bg-teal-dark disabled:opacity-50 cursor-pointer uppercase tracking-wide shrink-0"
-                  >
-                    {resending === shortKey ? "Sending\u2026" : "Send"}
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => handleDownload(a)}
+                      disabled={downloading === shortKey}
+                      className="px-3 py-1 border border-teal text-teal text-xs font-semibold rounded-sm hover:bg-teal hover:text-cream disabled:opacity-50 cursor-pointer uppercase tracking-wide"
+                    >
+                      {downloading === shortKey ? "Preparing\u2026" : "Download"}
+                    </button>
+                    <button
+                      onClick={() => handleResend(a.cacheKey)}
+                      disabled={resending === shortKey}
+                      className="px-3 py-1 bg-teal text-cream text-xs font-semibold rounded-sm hover:bg-teal-dark disabled:opacity-50 cursor-pointer uppercase tracking-wide"
+                    >
+                      {resending === shortKey ? "Sending\u2026" : "Send"}
+                    </button>
+                  </div>
                 </li>
               );
             })}

@@ -1,6 +1,13 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { getSubscriptions, getPopularSubscriptions, subscribe, deleteSubscription, sendEpub } from "../api";
+import {
+  getSubscriptions,
+  getPopularSubscriptions,
+  subscribe,
+  deleteSubscription,
+  sendEpub,
+  downloadEpub,
+} from "../api";
 import type { PopularSubscription } from "../api";
 import type { Subscription } from "../types";
 
@@ -30,6 +37,7 @@ export default function SubscriptionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [sending, setSending] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
   const [addingFeed, setAddingFeed] = useState<string | null>(null);
 
   useEffect(() => {
@@ -89,6 +97,18 @@ export default function SubscriptionsPage() {
       // ignore
     } finally {
       setSending(null);
+    }
+  }
+
+  async function handleDownload(articleId: string, title: string) {
+    setError(null);
+    setDownloading(articleId);
+    try {
+      await downloadEpub("article", articleId, `${title}.epub`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDownloading(null);
     }
   }
 
@@ -193,6 +213,13 @@ export default function SubscriptionsPage() {
                           className="text-xs text-teal hover:underline cursor-pointer disabled:opacity-50"
                         >
                           {sending === a.articleId ? "Sending\u2026" : "Email"}
+                        </button>
+                        <button
+                          onClick={() => handleDownload(a.articleId, a.title)}
+                          disabled={downloading === a.articleId}
+                          className="text-xs text-teal hover:underline cursor-pointer disabled:opacity-50"
+                        >
+                          {downloading === a.articleId ? "Preparing\u2026" : "Download"}
                         </button>
                       </div>
                     </li>

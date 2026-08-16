@@ -22,12 +22,15 @@ import type {
   CacheEntry,
   WeeklyBookMeta,
   CachedArticleMeta,
+  SentArticle,
   FeedRepo,
   UserSubscriptionRepo,
   UserRepo,
   ArticleRepo,
+  SentArticleRepo,
   EpubRepo,
 } from "./types.ts";
+import { MAX_SENT_ARTICLES } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // DynamoDB key constants
@@ -37,6 +40,7 @@ const INDEX_PK = "INDEX";
 const POPULAR_SUBS_SK = "POPULAR_SUBS";
 const WEEKLY_BOOKS_SK = "WEEKLY_BOOKS";
 const CACHED_ARTICLES_SK = "CACHED_ARTICLES";
+const SENT_ARTICLES_SK = "SENT_ARTICLES";
 
 const GSI_SK = "sk-index";
 
@@ -249,6 +253,14 @@ export class DynamoUserRepo implements UserRepo {
     if (!ref) return null;
     return dbGet<User>(this.doc, this.table, `USER#${ref.userId}`, "#ITEM");
   }
+
+  async setAutoSendWeekly(userId: string, enabled: boolean): Promise<User | null> {
+    const user = await this.getById(userId);
+    if (!user) return null;
+    const updated: User = { ...user, autoSendWeekly: enabled };
+    await dbPut(this.doc, this.table, `USER#${userId}`, "#ITEM", updated);
+    return updated;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +290,40 @@ export class DynamoArticleRepo implements ArticleRepo {
       article,
       nowPlusSecs(PENDING_ARTICLE_TTL_SECS),
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sent-article repository (weekly delivery history, per user)
+// ---------------------------------------------------------------------------
+
+export class DynamoSentArticleRepo implements SentArticleRepo {
+  private doc: DynamoDBDocumentClient;
+  private table: string;
+
+  constructor(env: AwsEnv) {
+    const { doc, table } = makeDocClient(env);
+    this.doc = doc;
+    this.table = table;
+  }
+
+  async list(userId: string): Promise<SentArticle[]> {
+    return (
+      (await dbGet<SentArticle[]>(this.doc, this.table, INDEX_PK, `${SENT_ARTICLES_SK}#${userId}`)) ?? []
+    );
+  }
+
+  async add(userId: string, articleIds: string[]): Promise<void> {
+    if (articleIds.length === 0) return;
+    const existing = await this.list(userId);
+    const sentAt = Date.now();
+    const added = articleIds.map((articleId) => ({ articleId, sentAt }));
+    const addedIds = new Set(articleIds);
+    const updated = [...added, ...existing.filter((s) => !addedIds.has(s.articleId))].slice(
+      0,
+      MAX_SENT_ARTICLES,
+    );
+    await dbPut(this.doc, this.table, INDEX_PK, `${SENT_ARTICLES_SK}#${userId}`, updated);
   }
 }
 
@@ -390,7 +436,8 @@ export class DynamoS3EpubRepo implements EpubRepo {
       return `epub/${kvKey.replace("epub-data:", "")}`;
     }
     if (kvKey.startsWith("weekly-book-data:")) {
-      return `weekly/${kvKey.replace("weekly-book-data:", "")}`;
+      // Modern keys are "<userId>:<weekKey>"; legacy keys are bare "<weekKey>".
+      return `weekly/${kvKey.replace("weekly-book-data:", "").replace(":", "/")}`;
     }
     return kvKey;
   }

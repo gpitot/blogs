@@ -3,6 +3,7 @@ import { handle } from "hono/aws-lambda";
 import { cors } from "hono/cors";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import type { AwsEnv } from "./repositories/types.ts";
+import { isAutoSendWeeklyEnabled } from "./repositories/types.ts";
 import {
   DynamoFeedRepo,
   DynamoUserSubscriptionRepo,
@@ -80,6 +81,8 @@ app.use(
   cors({
     origin: ["https://blog-dl.pages.dev", "http://localhost:5173"],
     credentials: true,
+    // So the browser can read the download filename off /download responses.
+    exposeHeaders: ["Content-Disposition"],
   }),
 );
 
@@ -414,12 +417,133 @@ app.get("/weekly-books", async (c) => {
   const user = c.get("user");
   const { conversion } = createServices(env);
   const books = await conversion.listWeeklyBooks(user.id);
-  return c.json({ books });
+  return c.json({ books, autoSendWeekly: isAutoSendWeeklyEnabled(user) });
+});
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+app.get("/settings", (c) => {
+  const user = c.get("user");
+  return c.json({ autoSendWeekly: isAutoSendWeeklyEnabled(user) });
+});
+
+app.post("/settings", async (c) => {
+  let body: { autoSendWeekly?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid request body." }, 400);
+  }
+
+  if (typeof body.autoSendWeekly !== "boolean") {
+    return c.json({ error: "autoSendWeekly must be true or false." }, 400);
+  }
+
+  const user = c.get("user");
+  const updated = await userRepo.setAutoSendWeekly(user.id, body.autoSendWeekly);
+  if (!updated) return c.json({ error: "User not found." }, 404);
+
+  logger.info(
+    { userId: user.id, autoSendWeekly: body.autoSendWeekly },
+    "Updated weekly auto-send setting",
+  );
+  return c.json({ autoSendWeekly: isAutoSendWeeklyEnabled(updated) });
 });
 
 // ---------------------------------------------------------------------------
 // Email delivery
 // ---------------------------------------------------------------------------
+
+/**
+ * Resolves one of the three EPUB flavours the UI can reference into bytes ready
+ * to email or stream back. Shared by /send-epub and /download so a user can
+ * always reach the same file either way.
+ */
+async function resolveEpub(
+  type: string,
+  id: string,
+  userId: string,
+): Promise<
+  | { ok: true; epubBytes: Uint8Array; title: string; filename: string }
+  | { ok: false; error: string; status: 400 | 404 }
+> {
+  const { conversion, posts } = createServices(env);
+  const safe = (title: string, fallback: string) =>
+    `${title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || fallback}.epub`;
+
+  if (type === "weekly") {
+    if (!/^\d{4}-W\d{2}$/.test(id))
+      return { ok: false, error: "Invalid ID.", status: 400 };
+    const result = await conversion.getWeeklyBook(userId, id);
+    if (!result)
+      return { ok: false, error: "Weekly book not found or expired.", status: 404 };
+    return {
+      ok: true,
+      epubBytes: new Uint8Array(result.buf),
+      title: result.meta.title,
+      filename: safe(result.meta.title, "weekly-reading"),
+    };
+  }
+
+  if (type === "article") {
+    if (!/^[a-f0-9]+$/.test(id))
+      return { ok: false, error: "Invalid ID.", status: 400 };
+    const article = await posts.getArticle(id);
+    if (!article)
+      return { ok: false, error: "Article not found or expired.", status: 404 };
+    return {
+      ok: true,
+      epubBytes: await conversion.convertArticleToEpub(article),
+      title: article.title,
+      filename: safe(article.title, "article"),
+    };
+  }
+
+  if (type === "cached") {
+    if (!/^[a-f0-9]+$/.test(id))
+      return { ok: false, error: "Invalid ID.", status: 400 };
+    const cached = await conversion.getCachedConversion(`epub:${id}`);
+    if (!cached) return { ok: false, error: "EPUB not found or expired.", status: 404 };
+    const buf = await conversion.getEpubData(cached.kvKey);
+    if (!buf)
+      return { ok: false, error: "EPUB data not found or expired.", status: 404 };
+    return {
+      ok: true,
+      epubBytes: new Uint8Array(buf),
+      title: cached.title,
+      filename: safe(cached.title, "article"),
+    };
+  }
+
+  return { ok: false, error: "Invalid epub type.", status: 400 };
+}
+
+app.get("/download/:type/:id", async (c) => {
+  const user = c.get("user");
+
+  let resolved;
+  try {
+    resolved = await resolveEpub(c.req.param("type"), c.req.param("id"), user.id);
+  } catch (err) {
+    logger.error({ err, userId: user.id }, "Failed to prepare EPUB for download");
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Failed to prepare download: ${msg}` }, 500);
+  }
+
+  if (!resolved.ok) return c.json({ error: resolved.error }, resolved.status);
+
+  return new Response(resolved.epubBytes, {
+    headers: {
+      "Content-Type": "application/epub+zip",
+      // The filename is already stripped to [A-Za-z0-9 \-_.], so it cannot
+      // break out of the quoted form.
+      "Content-Disposition": `attachment; filename="${resolved.filename}"`,
+      "Cache-Control": "private, no-store",
+    },
+  });
+});
 
 app.post("/send-epub", async (c) => {
   let body: { epub_type?: string; epub_id?: string };
@@ -437,43 +561,10 @@ app.post("/send-epub", async (c) => {
     return c.json({ error: "Email delivery is not configured." }, 503);
   }
 
-  const { conversion, posts } = createServices(env);
-
   try {
-    let epubBytes: Uint8Array;
-    let title: string;
-    let filename: string;
-
-    if (type === "weekly") {
-      if (!/^\d{4}-W\d{2}$/.test(id))
-        return c.json({ error: "Invalid ID." }, 400);
-      const result = await conversion.getWeeklyBook(user.id, id);
-      if (!result)
-        return c.json({ error: "Weekly book not found or expired." }, 404);
-      epubBytes = new Uint8Array(result.buf);
-      title = result.meta.title;
-      filename = `${result.meta.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "weekly-reading"}.epub`;
-    } else if (type === "article") {
-      if (!/^[a-f0-9]+$/.test(id)) return c.json({ error: "Invalid ID." }, 400);
-      const article = await posts.getArticle(id);
-      if (!article)
-        return c.json({ error: "Article not found or expired." }, 404);
-      epubBytes = await conversion.convertArticleToEpub(article);
-      title = article.title;
-      filename = `${article.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article"}.epub`;
-    } else if (type === "cached") {
-      if (!/^[a-f0-9]+$/.test(id)) return c.json({ error: "Invalid ID." }, 400);
-      const cached = await conversion.getCachedConversion(`epub:${id}`);
-      if (!cached) return c.json({ error: "EPUB not found or expired." }, 404);
-      const buf = await conversion.getEpubData(cached.kvKey);
-      if (!buf)
-        return c.json({ error: "EPUB data not found or expired." }, 404);
-      epubBytes = new Uint8Array(buf);
-      title = cached.title;
-      filename = `${cached.title.replace(/[^a-zA-Z0-9\s\-_.]/g, "").trim() || "article"}.epub`;
-    } else {
-      return c.json({ error: "Invalid epub type." }, 400);
-    }
+    const resolved = await resolveEpub(type, id, user.id);
+    if (!resolved.ok) return c.json({ error: resolved.error }, resolved.status);
+    const { epubBytes, title, filename } = resolved;
 
     await sendEpubEmail({
       apiKey: env.RESEND_API_KEY,
