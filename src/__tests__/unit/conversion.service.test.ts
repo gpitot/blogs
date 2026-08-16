@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { unzipSync, strFromU8 } from "fflate";
 import { ConversionService } from "../../services/conversion.service.ts";
 import type { EpubRepo, PendingArticle, WeeklyBookMeta } from "../../repositories/types.ts";
 import type { ImageProcessor } from "../../services/interfaces.ts";
@@ -216,6 +217,73 @@ describe("ConversionService", () => {
 
       const result = await service.listWeeklyBooks("user1");
       expect(result).toEqual(books);
+    });
+  });
+
+  describe("author credited in the EPUB", () => {
+    /** Read the EPUB back so we assert what a reader's device would show. */
+    function epubFile(bytes: Uint8Array, path: string): string {
+      return strFromU8(unzipSync(bytes)[path]!);
+    }
+
+    async function weeklyEpub(articles: PendingArticle[]): Promise<Uint8Array> {
+      await service.compileWeeklyBook(articles, "user1");
+      const [, , bytes] = (repo.addWeeklyBook as ReturnType<typeof vi.fn>).mock
+        .calls[0]!;
+      return bytes as Uint8Array;
+    }
+
+    it("uses the byline for a subscription article", async () => {
+      const bytes = await service.convertArticleToEpub(
+        makeArticle({ byline: "Jane Doe" }),
+      );
+      expect(epubFile(bytes, "OEBPS/content.opf")).toContain("Jane Doe");
+    });
+
+    it("credits the publication when the article has no byline", async () => {
+      const bytes = await service.convertArticleToEpub(
+        makeArticle({ byline: "", feedTitle: "Cloudflare Blog" }),
+      );
+      const opf = epubFile(bytes, "OEBPS/content.opf");
+      expect(opf).toContain("Cloudflare Blog");
+      expect(opf).not.toContain("Unknown Author");
+    });
+
+    it("falls back to Unknown Author only when nothing identifies the source", async () => {
+      const bytes = await service.convertArticleToEpub(
+        makeArticle({ byline: "", feedTitle: "" }),
+      );
+      expect(epubFile(bytes, "OEBPS/content.opf")).toContain("Unknown Author");
+    });
+
+    it("credits meta[name=author] on a single-URL conversion", async () => {
+      const html = ARTICLE_HTML.replace(
+        "<head>",
+        `<head><meta name="author" content="Jane Doe">`,
+      );
+      const { epubBytes } = await service.convertSingleArticle(
+        "https://example.com/post",
+        html,
+        "user1",
+      );
+      expect(epubFile(epubBytes, "OEBPS/content.opf")).toContain("Jane Doe");
+    });
+
+    it("leaves weekly chapters to inherit Various Authors when unknown", async () => {
+      const bytes = await weeklyEpub([
+        makeArticle({ byline: "", feedTitle: "" }),
+      ]);
+      // The regression this guards: a per-chapter "Unknown Author" sentinel
+      // used to shadow the book-level credit.
+      expect(epubFile(bytes, "OEBPS/ch1.xhtml")).toContain("Various Authors");
+      expect(epubFile(bytes, "OEBPS/ch1.xhtml")).not.toContain("Unknown Author");
+    });
+
+    it("credits the source blog on a weekly chapter that has no byline", async () => {
+      const bytes = await weeklyEpub([
+        makeArticle({ byline: "", feedTitle: "Cloudflare Blog" }),
+      ]);
+      expect(epubFile(bytes, "OEBPS/ch1.xhtml")).toContain("Cloudflare Blog");
     });
   });
 });

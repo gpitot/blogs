@@ -2,6 +2,7 @@ import { parseDocument } from "htmlparser2";
 import { createLogger } from "../logger.ts";
 import { proxiedFetch } from "../http/proxied-fetch.ts";
 import { detectChallenge, looksLikeFeedBody } from "../http/challenge.ts";
+import { joinNames, nameFromRssAuthor, resolveAuthor } from "./author.ts";
 
 const FEED_ACCEPT =
   "application/rss+xml,application/atom+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7";
@@ -14,10 +15,17 @@ export interface FeedItem {
   link: string;
   pubDate: number; // ms since epoch
   content: string; // inline HTML content from feed (content:encoded, description, or Atom content)
+  /**
+   * Byline from the feed, already falling back to the feed-level author.
+   * Optional because items also arrive as JSON queued before this existed.
+   */
+  author?: string;
 }
 
 export interface ParsedFeed {
   title: string;
+  /** Feed-level author, applied to items that name none of their own. */
+  author: string;
   items: FeedItem[];
 }
 
@@ -50,6 +58,27 @@ function childText(node: HtmlNode, tagName: string): string {
   return child ? textContent(child) : "";
 }
 
+/**
+ * Byline of an RSS <item> or <channel>. Dublin Core is the tag publishers
+ * actually use for a human name, and it may repeat for co-authors; plain
+ * <author> is an email address and only sometimes carries a name.
+ */
+function rssAuthor(node: HtmlNode): string {
+  const creators = findChildren(node, "dc:creator").map(textContent);
+  return (
+    joinNames(creators) ||
+    nameFromRssAuthor(childText(node, "author")) ||
+    nameFromRssAuthor(childText(node, "managingeditor")) ||
+    nameFromRssAuthor(childText(node, "itunes:author"))
+  );
+}
+
+/** Byline of an Atom <entry> or <feed>, from its <author><name> children. */
+function atomAuthor(node: HtmlNode): string {
+  const names = findChildren(node, "author").map((a) => childText(a, "name"));
+  return joinNames(names) || joinNames(findChildren(node, "dc:creator").map(textContent));
+}
+
 function findDeep(nodes: HtmlNode[], tagName: string): HtmlNode | null {
   for (const node of nodes) {
     if (
@@ -68,9 +97,10 @@ function findDeep(nodes: HtmlNode[], tagName: string): HtmlNode | null {
 
 function parseRss(doc: HtmlNode): ParsedFeed {
   const channel = findDeep(doc.children || [], "channel");
-  if (!channel) return { title: "", items: [] };
+  if (!channel) return { title: "", author: "", items: [] };
 
   const feedTitle = childText(channel, "title");
+  const feedAuthor = rssAuthor(channel);
   const itemNodes = findChildren(channel, "item");
 
   const items: FeedItem[] = [];
@@ -88,20 +118,22 @@ function parseRss(doc: HtmlNode): ParsedFeed {
         title,
         link,
         content,
+        author: resolveAuthor(rssAuthor(item), feedAuthor),
         pubDate: isNaN(pubDate) ? Date.now() : pubDate,
       });
     }
   }
 
-  return { title: feedTitle, items };
+  return { title: feedTitle, author: feedAuthor, items };
 }
 
 function parseAtom(doc: HtmlNode): ParsedFeed {
   const feed = findDeep(doc.children || [], "feed");
-  if (!feed) return { title: "", items: [] };
+  if (!feed) return { title: "", author: "", items: [] };
 
   // Get only direct children <title> to avoid picking up entry titles
   const feedTitle = childText(feed, "title");
+  const feedAuthor = atomAuthor(feed);
   const entries = findChildren(feed, "entry");
   const items: FeedItem[] = [];
 
@@ -137,12 +169,13 @@ function parseAtom(doc: HtmlNode): ParsedFeed {
         title,
         link,
         content,
+        author: resolveAuthor(atomAuthor(entry), feedAuthor),
         pubDate: isNaN(pubDate) ? Date.now() : pubDate,
       });
     }
   }
 
-  return { title: feedTitle, items };
+  return { title: feedTitle, author: feedAuthor, items };
 }
 
 export function parseFeedXml(xml: string): ParsedFeed {

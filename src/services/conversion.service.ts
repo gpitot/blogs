@@ -9,6 +9,7 @@ import type { ImageProcessor } from "./interfaces.ts";
 import type { EpubImage } from "./images.ts";
 import { extractArticle } from "./clean.ts";
 import { generateEpub } from "./epub.ts";
+import { displayAuthor, resolveAuthor } from "./author.ts";
 import { urlToKey } from "../utils.ts";
 import { createLogger } from "../logger.ts";
 
@@ -38,7 +39,7 @@ export class ConversionService {
 
     const epubBytes = generateEpub(
       article.title || "Article",
-      article.byline || "Unknown Author",
+      displayAuthor(article.byline, article.siteName),
       [article],
       images,
     );
@@ -95,13 +96,15 @@ export class ConversionService {
     const { html: contentWithImages, images } =
       await this.images.processArticleImages(article.content, article.url);
 
+    const author = displayAuthor(article.byline, article.feedTitle);
+
     return generateEpub(
       article.title,
-      article.byline || "Unknown Author",
+      author,
       [
         {
           title: article.title,
-          byline: article.byline,
+          byline: author,
           content: contentWithImages,
         },
       ],
@@ -143,7 +146,9 @@ export class ConversionService {
         allImages.push(...images);
         chapters.push({
           title: `${article.feedTitle}: ${article.title}`,
-          byline: article.byline || "Unknown Author",
+          // Empty when unknown so generateEpub credits the book's
+          // "Various Authors" rather than stamping a sentinel on the chapter.
+          byline: resolveAuthor(article.byline, article.feedTitle),
           content: contentWithImages,
         });
       } catch (err) {
@@ -153,7 +158,9 @@ export class ConversionService {
         );
         chapters.push({
           title: `${article.feedTitle}: ${article.title}`,
-          byline: article.byline || "Unknown Author",
+          // Empty when unknown so generateEpub credits the book's
+          // "Various Authors" rather than stamping a sentinel on the chapter.
+          byline: resolveAuthor(article.byline, article.feedTitle),
           content: article.content,
         });
       }

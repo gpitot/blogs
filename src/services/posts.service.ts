@@ -8,6 +8,7 @@ import {
   extractCanonicalUrl,
 } from "./clean.ts";
 import { classifyCompleteness, detectRawPaywall, textLength } from "./truncation.ts";
+import { resolveAuthor } from "./author.ts";
 import { generateId } from "../utils.ts";
 import { createLogger } from "../logger.ts";
 
@@ -37,6 +38,7 @@ export class PostsService {
         item.content,
         item.title,
         item.link,
+        item.author,
       );
 
       // A long feed body is not necessarily the whole article — Substack ships
@@ -73,6 +75,7 @@ export class PostsService {
           item.content,
           item.title,
           item.link,
+          item.author,
         );
         articleUrl = item.link;
       }
@@ -93,7 +96,9 @@ export class PostsService {
       id: generateId(),
       url: articleUrl,
       title: article.title || item.title || "Article",
-      byline: article.byline || "Unknown Author",
+      // Left empty when genuinely unknown: the article carries feedTitle, so
+      // the fallback is better chosen at display time than frozen in here.
+      byline: resolveAuthor(article.byline, item.author, article.siteName),
       content: article.content,
       savedAt: Date.now(),
       feedId,

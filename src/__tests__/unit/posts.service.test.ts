@@ -270,6 +270,50 @@ describe("PostsService", () => {
       expect(result!.title).toBe("My Great Post");
       expect(result!.id).toMatch(/^[a-f0-9]{16}$/);
     });
+
+    it("credits the feed's author on the inline-content path", async () => {
+      const item = makeFeedItem({
+        content: "<p>" + "B".repeat(600) + "</p>",
+        author: "Jane Doe",
+      });
+
+      const result = await service.fetchAndSave(item, "sub1", "Blog");
+
+      // This path never fetches the page, so the feed is the only author source.
+      expect(fetcher.fetch).not.toHaveBeenCalled();
+      expect(result!.byline).toBe("Jane Doe");
+    });
+
+    it("prefers the page's author over the feed's when it fetched the page", async () => {
+      const item = makeFeedItem({ content: "<p>Short</p>", author: "Feed Bot" });
+      (fetcher.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+        ARTICLE_HTML.replace(
+          "<head>",
+          `<head><meta name="author" content="Jane Doe">`,
+        ),
+      );
+
+      const result = await service.fetchAndSave(item, "sub1", "Blog");
+
+      expect(result!.byline).toBe("Jane Doe");
+    });
+
+    it("keeps the feed's author when the fetched page names none", async () => {
+      const item = makeFeedItem({ content: "<p>Short</p>", author: "Jane Doe" });
+      (fetcher.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(ARTICLE_HTML);
+
+      const result = await service.fetchAndSave(item, "sub1", "Blog");
+
+      expect(result!.byline).toBe("Jane Doe");
+    });
+
+    it("leaves the byline empty rather than storing a sentinel", async () => {
+      const item = makeFeedItem({ content: "<p>" + "B".repeat(600) + "</p>" });
+
+      const result = await service.fetchAndSave(item, "sub1", "Blog");
+
+      expect(result!.byline).toBe("");
+    });
   });
 
   describe("getArticle", () => {
